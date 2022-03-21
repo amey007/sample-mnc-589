@@ -72,10 +72,10 @@ int role = 0; // denote server - 1, or client - 0
 int localsockfd;
 int clientsockfd;
 //int flag = 0;
-char listenerPort[PORTSTRLEN];
+char listenerPort[PORTSTRLEN];  //checked
 struct connection connections[4];
 int connIndex = 0;
-int logedin = 0; // a flag to indicate log in, avoid multible log in
+int loggedin = 0; // a flag to indicate log in, avoid multible log in
 
 fd_set master, read_fds;
 int maxfd;
@@ -85,6 +85,73 @@ int maxfd;
 *returns 0 on success and -1 on fail.
 *Pass in a char * to store the result.
 */
+
+
+/*-----------------------HELPER FUNCTIONS-----------------------*/
+int is_valid_port(char *input) {
+	int i = 0;
+	if(input[i] == '-') { return 0; }
+	for(; input[i] != '\0'; i++) {
+		if(!isdigit(input[i])) return 0;
+	}
+	return 1;
+}
+
+int bind_socket(char port_str)
+{	
+	if(!is_valid_port(port_str)){
+		perror("Invalid Port Number entered!")
+	}
+	int port = atoi(port_str);  //Converts the port from char to int
+
+	struct sockaddr_in my_addrs;
+	int fdsocket = 0;
+	fdsocket = socket(AF_INET, SOCK_STREAM, 0);// return socket file descriptor
+    if(fdsocket < 0)
+    {
+       perror("Failed to create socket");
+       return 0;
+    }
+
+    //setting up client socket
+    my_addrs.sin_family=AF_INET;
+    my_addrs.sin_addr.s_addr=INADDR_ANY;
+    my_addrs.sin_port=htons(port);
+    int optval=1;
+    setsockopt(fdsocket, SOL_SOCKET, SO_REUSEPORT, &optval, sizeof(optval));
+    if(bind(fdsocket, (struct  sockaddr*) &my_addrs, sizeof(struct sockaddr_in)) == 0)
+    {
+    	printf("\nclient binded to port correctly\n");
+    	return fdsocket;
+    }
+    else
+    {
+    	printf("\nError in binding client port\n");
+    	return 0;
+    }
+}
+
+int connect_host(char *server_ip, int server_port, int c_port)
+{
+    int len;
+    struct sockaddr_in remote_server_addr;
+
+    bzero(&remote_server_addr, sizeof(remote_server_addr));
+    remote_server_addr.sin_family = AF_INET;
+    inet_pton(AF_INET, server_ip, &remote_server_addr.sin_addr);//inet_pton - convert IPv4 and IPv6 addresses from text to binary form
+    remote_server_addr.sin_port = htons(server_port);//function converts the unsigned short integer hostshort from host byte order to network byte order.
+
+    if(connect(fdsocket, (struct sockaddr*)&remote_server_addr, sizeof(remote_server_addr)) < 0)
+    {
+        perror("Connect failed");
+    }
+    else{
+    	printf("\nLogged in\n");
+    }
+    return fdsocket;
+}
+
+
 int get_localIP(char *res){
 	int sockfd = 0;
 	struct addrinfo hints, *servinfo, *p;
@@ -320,7 +387,7 @@ void processCmd(char **cmd, int count){
 		cse4589_print_and_log("[%s:END]\n", cmd[0]);
 		fflush(stdout);
 	}else if(strcmp(cmd[0], "LOGIN") == 0){
-		if(role != 0 || count != 3 || !isValidAddr(cmd[1], cmd[2]) || logedin){
+		if(role != 0 || count != 3 || !isValidAddr(cmd[1], cmd[2]) || loggedin){
 			//fail
 			cse4589_print_and_log("[%s:ERROR]\n", cmd[0]);
 			fflush(stdout);
@@ -387,7 +454,7 @@ void processCmd(char **cmd, int count){
 			i+=2;
 		}
 
-	logedin = 1;
+	loggedin = 1;
 	FD_SET(clientsockfd, &master);
 	maxfd = clientsockfd>maxfd? clientsockfd:maxfd;
 
@@ -399,7 +466,7 @@ void processCmd(char **cmd, int count){
 	// mark
 
 	}else if(strcmp(cmd[0], "REFRESH") == 0){
-		if(role != 0 || !logedin){
+		if(role != 0 || !loggedin){
 			//fail
 			cse4589_print_and_log("[%s:ERROR]\n", cmd[0]);
 			fflush(stdout);
@@ -418,7 +485,7 @@ void processCmd(char **cmd, int count){
 		fflush(stdout);
 		//process msg to update list
 	}else if(strcmp(cmd[0], "SEND") == 0){
-		if(role != 0 || !logedin || !isValidAddr(cmd[1], "8888")){
+		if(role != 0 || !loggedin || !isValidAddr(cmd[1], "8888")){
 			//fail
 			cse4589_print_and_log("[%s:ERROR]\n", cmd[0]);
 			fflush(stdout);
@@ -477,7 +544,7 @@ void processCmd(char **cmd, int count){
 		}
 
 	}else if (strcmp(cmd[0], "BROADCAST") == 0){
-		if (role != 0 || !logedin) {
+		if (role != 0 || !loggedin) {
 			//fail
 			cse4589_print_and_log("[%s:ERROR]\n", cmd[0]);
 			fflush(stdout);
@@ -506,7 +573,7 @@ void processCmd(char **cmd, int count){
 		cse4589_print_and_log("[%s:END]\n", cmd[0]);
 		fflush(stdout);
 	}else if(strcmp(cmd[0], "BLOCK") == 0){
-		if (role != 0 || !logedin || !isValidAddr(cmd[1], "8888") || count != 2) {
+		if (role != 0 || !loggedin || !isValidAddr(cmd[1], "8888") || count != 2) {
 			//fail
 			cse4589_print_and_log("[%s:ERROR]\n", cmd[0]);
 			fflush(stdout);
@@ -555,7 +622,7 @@ void processCmd(char **cmd, int count){
 		}
 
 	}else if(strcmp(cmd[0], "UNBLOCK") == 0){
-		if(role != 0 || !logedin || !isValidAddr(cmd[1], "8888") || count != 2){
+		if(role != 0 || !loggedin || !isValidAddr(cmd[1], "8888") || count != 2){
 			//fail
 			cse4589_print_and_log("[%s:ERROR]\n", cmd[0]);
 			fflush(stdout);
@@ -606,7 +673,7 @@ void processCmd(char **cmd, int count){
 	}else if(strcmp(cmd[0], "EXIT") == 0){
 		char buf[BUFLEN] = "EXIT";
 		send(clientsockfd, buf, BUFLEN, 0);
-		logedin = 0;
+		loggedin = 0;
 		close(clientsockfd);
 		FD_CLR(clientsockfd, &master);
 		cse4589_print_and_log("[%s:SUCCESS]\n", cmd[0]);
@@ -615,7 +682,7 @@ void processCmd(char **cmd, int count){
 		fflush(stdout);
 		exit(0);
 	}else if(strcmp(cmd[0], "LOGOUT") == 0){
-		if(!logedin){
+		if(!loggedin){
 			//fail
 		cse4589_print_and_log("[%s:ERROR]\n", cmd[0]);
 		fflush(stdout);
@@ -625,7 +692,7 @@ void processCmd(char **cmd, int count){
 		}
 		char buf[BUFLEN] = "LOGOUT";
 		send(clientsockfd, buf, BUFLEN, 0); //16?
-		logedin = 0;
+		loggedin = 0;
 		close(clientsockfd);
 		FD_CLR(clientsockfd, &master);
 		cse4589_print_and_log("[%s:SUCCESS]\n", cmd[0]);
@@ -1210,8 +1277,8 @@ int main(int argc, char **argv)
 	int isClient = 0;
 
 	// variable for socket file descriptor
-	int sockfd = 0;
-	int fdsocket = 0;
+	int sock_fd = 0;
+	//int fdsocket = 0;
 
 
 	/*Start Here*/
@@ -1233,7 +1300,8 @@ int main(int argc, char **argv)
 		{
 			isclient = 1;
 			strcpy(listenerPort, argv[2]);
-			prep(argv[2]);
+			clientsockfd=bind_socket(listenerPort);
+			// prep(argv[2]);
 			start();
 		}
 		else 
