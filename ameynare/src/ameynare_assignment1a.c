@@ -1343,14 +1343,19 @@ int main(int argc, char **argv)
 			// TODO - ALOK
 			isClient = 0;
 			strcpy(listenerPort, argv[2]);
-			prep(argv[2]);
+			localsockfd = bind_socket(listnerPort);
+			if(listen(localsockfd, BACKLOG) == -1)
+			{
+				exit(-1);
+			}
 			start();
 		}
+
 
 		// This segment creates socket for the client and binds it to a port and puts it in connect mode
 		else if (strcmp(argv[1], "c") == 0)
 		{
-			isclient = 1;
+			isClient = 1;
 			strcpy(listenerPort, argv[2]);
 			clientsockfd=bind_socket(listenerPort);
 			// prep(argv[2]);
