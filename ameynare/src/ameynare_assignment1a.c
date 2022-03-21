@@ -48,8 +48,8 @@
 #define STD_IN 0
 #define HOSTNAMESTRLEN 50
 #define PORTSTRLEN 10
-#define loged_in 1
-#define loged_out 0
+#define logged_in 1
+#define logged_out 0
 
 
 struct connection {
@@ -68,11 +68,11 @@ struct connection {
 
 char bufferedmsg[BUFLEN] = "";
 
-int role = 0; // denote server - 1, or client - 0
+int isClient = 0;   //// This a variable is used as a flag to indicate client or server. 0 -> Server and 1 -> Client
 int localsockfd;
 int clientsockfd;
 //int flag = 0;
-char listenerPort[PORTSTRLEN];  //checked
+char listenerPort[PORTSTRLEN]; 
 struct connection connections[4];
 int connIndex = 0;
 int loggedin = 0; // a flag to indicate log in, avoid multible log in
@@ -93,6 +93,38 @@ int is_valid_port(char *input) {
 	if(input[i] == '-') { return 0; }
 	for(; input[i] != '\0'; i++) {
 		if(!isdigit(input[i])) return 0;
+	}
+	return 1;
+}
+
+int is_valid_IP(char *ip) { 	
+	char temp[16]; 
+	memset(temp, '\0', 16);
+	strcpy(temp, ip); 
+	
+	int num_args = 0; 
+	char *args[20]; 
+	
+	args[num_args] = strtok(temp, "."); 
+	while (args[num_args] != NULL) { 
+		args[++num_args] = strtok(NULL, "."); 
+	}
+	
+	if (num_args != 4) { 
+		return 0; 
+	}
+	else { 
+		for (int i = 0; i < num_args; ++i) { 
+			for (int j = 0; j < strlen(args[i]); ++j) { 
+				if (args[i][j] < '0' || args[i][j] > '9') {					
+					return 0;
+				}
+			}
+			int check = atoi(args[i]); 
+			if (check > 256 || check < 0) { 			
+				return 0;
+			}
+		}
 	}
 	return 1;
 }
@@ -141,14 +173,14 @@ int connect_host(char *server_ip, int server_port, int c_port)
     inet_pton(AF_INET, server_ip, &remote_server_addr.sin_addr);//inet_pton - convert IPv4 and IPv6 addresses from text to binary form
     remote_server_addr.sin_port = htons(server_port);//function converts the unsigned short integer hostshort from host byte order to network byte order.
 
-    if(connect(fdsocket, (struct sockaddr*)&remote_server_addr, sizeof(remote_server_addr)) < 0)
+    if(connect(clientsockfd, (struct sockaddr*)&remote_server_addr, sizeof(remote_server_addr)) < 0)
     {
         perror("Connect failed");
     }
     else{
     	printf("\nLogged in\n");
     }
-    return fdsocket;
+    return clientsockfd;
 }
 
 
@@ -194,6 +226,8 @@ int get_localIP(char *res){
 * Preparation, create socket and listen for connection.
 * Success return 0, otherwise -1
 */
+
+// Need to remove this function, separate functions implemented for server and client
 int prep(const char *port){
 	struct addrinfo hints, *servinfo, *p;
 
@@ -243,6 +277,7 @@ int strToNum(const char* s){
 /*
 * Check if given addr and #port is valid
 */
+// Need to remove this function, separate functions implemented for server and client
 int isValidAddr(char *addr, char *port){
 	//debug
 	//addr[strlen(addr)] = '\0';
@@ -276,7 +311,7 @@ int isValidAddr(char *addr, char *port){
 */
 void packList(char *list){
 	for (int i=0; i<connIndex; i++) {
-		if(connections[i].status == loged_in){
+		if(connections[i].status == logged_in){
 			char tmp[PORTSTRLEN];
 			char status[5];
 			// int to string
@@ -379,7 +414,7 @@ void processCmd(char **cmd, int count){
 		cse4589_print_and_log("[%s:SUCCESS]\n", cmd[0]);
 		fflush(stdout);
 		for(int i=0;i<connIndex;i++){
-			if(connections[i].status == loged_in){
+			if(connections[i].status == logged_in){
 				cse4589_print_and_log("%-5d%-35s%-20s%-8d\n", count++, connections[i].hostname, connections[i].remote_addr, connections[i].portNum);
 				fflush(stdout);
 			}
@@ -713,7 +748,7 @@ void processCmd(char **cmd, int count){
 		fflush(stdout);
 		for(int i=0;i<connIndex;i++){
 			char tmp[20];
-			if(connections[i].status == loged_in){
+			if(connections[i].status == logged_in){
 				strcpy(tmp, "logged-in");
 			}else{
 				strcpy(tmp, "logged-out");
@@ -795,7 +830,7 @@ void response(char **arguments, int count, int caller){
 					return;
 				}
 
-				if(connections[i].status == loged_in){
+				if(connections[i].status == logged_in){
 					send(connections[i].connsockfd, msg, BUFLEN, 0);
 					connections[i].msg_received++;
 					//triger event
@@ -848,7 +883,7 @@ void response(char **arguments, int count, int caller){
 
 		for (int i=0; i<connIndex; i++) {
 			if(!isBlocked(caller, connections[i].remote_addr) && connections[i].connsockfd != caller){
-				if(connections[i].status == loged_in){
+				if(connections[i].status == logged_in){
 					send(connections[i].connsockfd, msg, BUFLEN, 0);
 					connections[i].msg_received++;
 					//triger event
@@ -974,7 +1009,7 @@ void response(char **arguments, int count, int caller){
 			if(connections[i].connsockfd == caller){
 				close(connections[i].connsockfd);
 				FD_CLR(connections[i].connsockfd, &master);
-				connections[i].status = loged_out;
+				connections[i].status = logged_out;
 				break;
 			}
 		}
@@ -986,24 +1021,32 @@ void response(char **arguments, int count, int caller){
 /*
 * Start select for cmd and connecting.
 */
-void start(void){
-	char *argm[5];
 
+// Check the localsockfd and the clientsockfd conflict ##############################//
+
+void start(void){
+	char *argm[5];  //variable to store different parts of the stdin
+
+	// Initializes file descripter to have zero bits
 	FD_ZERO(&master);
 	FD_ZERO(&read_fds);
-	FD_SET(STD_IN, &master);
-	FD_SET(localsockfd, &master);
+
+	FD_SET(STD_IN, &master);  // Set STDIN to master_list
+	FD_SET(localsockfd, &master);  // Set localsockfd to master_list
 	maxfd = localsockfd;
 
 	while (1) {
 		read_fds = master;
+		// select() ->  indicates which of the specified file descriptors is ready for reading, blocks if none is ready
 		if(select(maxfd+1, &read_fds, NULL, NULL, NULL) == -1){
-			return;
+			perror("select() error"); 
+			exit(-1);
 		}
 
+		// fetching the available socket 
 		for(int i=0 ;i < maxfd+1; i++){
 			if(FD_ISSET(i, &read_fds)){
-				// collect input
+				// This section of code handles the terminal input and fetches the command and input arguments
 				if(i == STD_IN){
 					char *cmd = (char *)malloc(sizeof(char)*CMD_SIZE);
 					memset(cmd, '\0', CMD_SIZE);
@@ -1015,68 +1058,77 @@ void start(void){
 						}
 					}
 
-					int count = 0;
+					int args_num = 0;
 					char *tmp = strtok(cmd, " ");
 					while(tmp != NULL){
-						argm[count++] = tmp;
+						argm[args_num++] = tmp;   //argm stores all the parts of input provided through terminal
 						tmp = strtok(NULL, " ");
 					}
 
-					processCmd(argm, count);
-				}else if(i == localsockfd && role == 1){
+					processCmd(argm, args_num);   //user defined function that implements set of events
+
+				}else if(i == localsockfd && isClient == 0){ //In server mode
 					// process new connections, use a data structure to store info
 					struct sockaddr_storage remoteaddr;
 					socklen_t len = sizeof(remoteaddr);
 					int newfd = accept(localsockfd, (struct sockaddr *)&remoteaddr, &len);
-					if(newfd == -1){
-//                        flag = -1;
-						continue;
+					if(newfd == -1){ 
+//                        flag = -1; //check
+						continue;  //check for another available socket
 					}
-					FD_SET(newfd, &master);
-					maxfd = maxfd > newfd? maxfd: newfd;
+					FD_SET(newfd, &master); // Set newfd to master_list
+					maxfd = maxfd > newfd? maxfd: newfd;   // sets new max value
 
-					char clientPort[PORTSTRLEN];
-					// bug: different length between client and server
+					/*##### CAN BE CLUBBED TO ONE FUNCTION - START #####*/
+
+					char clientPort[PORTSTRLEN];   
+					// bug: different length between client and server   //check 
 					recv(newfd, clientPort, PORTSTRLEN, 0);
-					char tmp[INET_ADDRSTRLEN];
+					char tmp[INET_ADDRSTRLEN];   //buffer with size INET_ADDRSTRLEN
 					inet_ntop(AF_INET, &(((struct sockaddr_in *)&remoteaddr)->sin_addr), tmp, INET_ADDRSTRLEN);
+
 					struct hostent *he;
-					struct in_addr ipv4addr;
+					struct in_addr ipv4addr; 
 					inet_pton(AF_INET, tmp, &ipv4addr);
-					he = gethostbyaddr(&ipv4addr, sizeof(struct in_addr), AF_INET);
+					he = gethostbyaddr(&ipv4addr, sizeof(struct in_addr), AF_INET);  //returns data in hostent structure
+
 					int exist = 0;
 					for(int i=0;i<connIndex;i++){
-						if(strcmp(connections[i].remote_addr, tmp) == 0){
+						if(strcmp(connections[i].remote_addr, tmp) == 0){ //checks if any of the conections have same addr
 							exist = 1;
-							connections[i].status = loged_in;
+							connections[i].status = logged_in; //updates status for the host
 							break;
 						}
 					}
-					if(!exist){
+					//if not match found, maintain a new connection record
+					if(!exist){  
 						struct connection newConnection;
 						newConnection.connsockfd = newfd;
 						strcpy(newConnection.remote_addr, tmp);
-						//newConnection.portNum = ((struct sockaddr_in *)&remoteaddr)->sin_port;
+						//newConnection.portNum = ((struct sockaddr_in *)&remoteaddr)->sin_port;  //remove
 						newConnection.portNum = strToNum(clientPort);
 						strcpy(newConnection.hostname, he->h_name);
 						newConnection.msg_sent = 0;
 						newConnection.msg_received = 0;
-						newConnection.status = loged_in;
+						newConnection.status = logged_in;
 						newConnection.blockindex = 0;
-						connections[connIndex++] = newConnection;
+						connections[connIndex++] = newConnection;  //append to our previous connection set
 					}
-					// sort the array
+					// Sorting the connection array in increasing order of the port number
 					if(connIndex > 1){
-						for(int cur = 0; cur< connIndex-1; cur++){
-							for(int fast = cur+1; fast<connIndex; fast++){
-								if(connections[cur].portNum > connections[fast].portNum){
-									struct connection tmp = connections[cur];
-									connections[cur] = connections[fast];
+						for(int m = 0; m< connIndex-1; m++){
+							for(int fast = m+1; fast<connIndex; fast++){
+								if(connections[m].portNum > connections[fast].portNum){
+									struct connection tmp = connections[m];
+									connections[m] = connections[fast];
 									connections[fast] = tmp;
 								}
 							}
 						}
 					}
+					/*##### CAN BE CLUBBED TO ONE FUNCTION - START #####*/
+
+					/*##### CODE TO BE CHECKED FROM HERE #####*/
 					// afterwards redirect the array to newly connected client
 					char list[BUFLEN] = "";
 					packList(list);
