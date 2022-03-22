@@ -700,6 +700,8 @@ void shellCmd(char **cmd, int count){
 		cse4589_print_and_log("[%s:SUCCESS]\n", cmd[0]);		
 		cse4589_print_and_log("[%s:END]\n", cmd[0]);
 		// server response not present, also error msg not handled 
+<<<<<<< Updated upstream
+=======
 
 	}else if(strcmp(cmd[0], "EXIT") == 0){ //CHECK - Has some part to be handled on the server side
 		char buf[BUFLEN] = "EXIT";
@@ -711,7 +713,8 @@ void shellCmd(char **cmd, int count){
 		cse4589_print_and_log("[%s:END]\n", cmd[0]);		
 		exit(0); //terminate the code
 		// server response not present, also error msg not handled 
-
+>>>>>>> Stashed changes
+	// git push exit event
 	}/*else if(strcmp(cmd[0], "STATISTICS") == 0){
 		if(role != 1){
 			//fail
