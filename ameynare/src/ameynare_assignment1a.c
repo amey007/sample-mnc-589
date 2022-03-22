@@ -712,7 +712,7 @@ void shellCmd(char **cmd, int count){
 		exit(0); //terminate the code
 		// server response not present, also error msg not handled 
 
-	}else if(strcmp(cmd[0], "STATISTICS") == 0){
+	}/*else if(strcmp(cmd[0], "STATISTICS") == 0){
 		if(role != 1){
 			//fail
 		cse4589_print_and_log("[%s:ERROR]\n", cmd[0]);
@@ -738,22 +738,62 @@ void shellCmd(char **cmd, int count){
 		cse4589_print_and_log("[%s:END]\n", cmd[0]);
 		
 
-	}else if(strcmp(cmd[0], "BLOCKED") == 0){
-		if(role != 1 || count != 2 || !isValidAddr(cmd[1], "8888")){
+	}*/
+	
+	/*CHECKED STATISTICS COMMAND*/
+	else if (strcmp(cmd[0],"STATISTICS") == 0)
+	{
+		if (role == 1)
+		int temp[100]
+		{
+			cse4589_print_and_log("[%s:SUCCESS]\n", cmd[0]);
+			int i = 0
+			while(i < connIndex)
+			{
+				char tmp[20];
+
+				if(connections[i].status == logged_in)
+					strcpy(tmp, "logged-in");
+				else
+					strcpy(tmp, "logged-out");
+
+				cse4589_print_and_log("%-5d%-35s%-8d%-8d%-8s\n", i+1, connections[i].hostname, connections[i].msg_sent, connections[i].msg_received, tmp);
+				
+				i++;
+			}
+			cse4589_print_and_log("[%s:END]\n", cmd[0]);
+
+		}
+
+		else
+		{
+			cse4589_print_and_log("[%s:ERROR]\n", cmd[0]);
+			cse4589_print_and_log("[%s:END]\n", cmd[0]);
+			return;
+		}
+	}
+	
+	else if(strcmp(cmd[0], "BLOCKED") == 0)
+	{
+		if(role != 1 || count != 2 || !isValidAddr(cmd[1], "8888"))
+		{
 			//fail
-		cse4589_print_and_log("[%s:ERROR]\n", cmd[0]);
+			cse4589_print_and_log("[%s:ERROR]\n", cmd[0]);
 		
-		cse4589_print_and_log("[%s:END]\n", cmd[0]);
+			cse4589_print_and_log("[%s:END]\n", cmd[0]);
 		
-		return;
+			return;
 		}
 		int flag = 0;
-		for(int i=0;i<connIndex;i++){
-			if(strcmp(connections[i].remote_addr, cmd[1]) == 0){
+		for(int i=0;i<connIndex;i++)
+		{
+			if(strcmp(connections[i].remote_addr, cmd[1]) == 0)
+			{
 				flag = 1;
 				cse4589_print_and_log("[%s:SUCCESS]\n", cmd[0]);
 				
-				for (int j=0; j<connections[i].blockindex; j++) {
+				for (int j=0; j<connections[i].blockindex; j++) 
+				{
 					//cse4589
 					cse4589_print_and_log("%-5d%-35s%-20s%-8d\n", j+1, connections[i].blockedIPs[j]->hostname, connections[i].blockedIPs[j]->remote_addr, connections[i].blockedIPs[j]->portNum);
 					
@@ -762,20 +802,21 @@ void shellCmd(char **cmd, int count){
 			}
 		}
 
-		if(flag == 0){
+	}
+
+	if(role != 1 || count != 2 || !isValidAddr(cmd[1], "8888")){
 			//fail
 		cse4589_print_and_log("[%s:ERROR]\n", cmd[0]);
 		
 		cse4589_print_and_log("[%s:END]\n", cmd[0]);
 		
 		return;
-		}else{
-		cse4589_print_and_log("[%s:END]\n", cmd[0]);
-		
 		}
-	}
 
 }
+
+
+
 
 /*
 * Response to client incoming msges
