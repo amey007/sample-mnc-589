@@ -244,6 +244,36 @@ int strToNum(const char* s){
 	return ret;
 }
 
+int in_Cur_LogClients(char *rcv_client_ip){
+// check if receiver of the msg is in local list of the client
+	int present = 0;
+	for (int i=0; i<connIndex; i++) {
+		if (strcmp(cmd[1], connections[i].remote_addr) == 0) {
+			present = 1;
+			break;
+		}
+	}
+	return present;
+}
+
+// TODO
+int is_Blocked(char *client_ip){
+	int blocked = 0;
+	for(int i=0;i<connIndex;i++){
+		if(strcmp(connections[i].remote_addr, cmd[1]) == 0){
+			flag = 1;
+			break;
+		}
+	}
+	if(flag == 0){
+		//fail
+		cse4589_print_and_log("[%s:ERROR]\n", cmd[0]);
+		
+		cse4589_print_and_log("[%s:END]\n", cmd[0]);
+		
+		return;
+	}
+}
 
 // Need to remove this function, alternate function implemented get_IP
 int get_localIP(char *res){
@@ -455,17 +485,25 @@ void shellCmd(char **cmd, int count){
 		cse4589_print_and_log("[%s:END]\n", cmd[0]);
 		
 	}else if(strcmp(cmd[0], "LIST") == 0){
-		int count = 1;
-		cse4589_print_and_log("[%s:SUCCESS]\n", cmd[0]);
-		//loop to print the client details from the stored struct data structure		
-		for(int i=0;i<connIndex;i++){
-			if(connections[i].status == logged_in){
-				cse4589_print_and_log("%-5d%-35s%-20s%-8d\n", count++, connections[i].hostname, connections[i].remote_addr, connections[i].portNum);				
+		if (isClient && !logged_in){
+			// on failure
+			cse4589_print_and_log("[%s:ERROR]\n", cmd[0]);			
+			cse4589_print_and_log("[%s:END]\n", cmd[0]);			
+			return;
+		}else{
+			int count = 1;
+			cse4589_print_and_log("[%s:SUCCESS]\n", cmd[0]);
+			//loop to print the client details from the stored struct data structure		
+			for(int i=0;i<connIndex;i++){
+				if(connections[i].status == logged_in){
+					cse4589_print_and_log("%-5d%-35s%-20s%-8d\n", count++, connections[i].hostname, connections[i].remote_addr, connections[i].portNum);				
+				}
 			}
+			cse4589_print_and_log("[%s:END]\n", cmd[0]);
 		}
-		cse4589_print_and_log("[%s:END]\n", cmd[0]);
 		
-	}else if(strcmp(cmd[0], "LOGIN") == 0){
+		
+	}else if(strcmp(cmd[0], "LOGIN") == 0){ //CHECK - Has some part to be handled on the server side
 		if(isClient != 1 || count != 3 || !is_valid_IP(cmd[1]) || !is_valid_port(cmd[2]) || loggedin){
 			// only when fails to meet the required conditions
 			cse4589_print_and_log("[%s:ERROR]\n", cmd[0]);			
@@ -483,7 +521,7 @@ void shellCmd(char **cmd, int count){
 		unpack_store(buf);                 
 
 		char unread[BUFLEN];
-		recv(clientsockfd, unread, BUFLEN, 0);  ////receives the list of buffered msgs from the server
+		recv(clientsockfd, unread, BUFLEN, 0);  //receives the list of buffered msgs from the server
 		char *msgbuf[BUFLEN];
 		int count = 0;
 		char *q = strtok(unread, "---");
@@ -507,7 +545,7 @@ void shellCmd(char **cmd, int count){
 		cse4589_print_and_log("[%s:SUCCESS]\n", cmd[0]);		
 		cse4589_print_and_log("[%s:END]\n", cmd[0]);
 		
-	}else if(strcmp(cmd[0], "REFRESH") == 0){
+	}else if(strcmp(cmd[0], "REFRESH") == 0){ //CHECK - Has some part to be handled on the server side
 		if(isClient != 1 || !loggedin){
 			// on failure
 			cse4589_print_and_log("[%s:ERROR]\n", cmd[0]);			
@@ -515,230 +553,164 @@ void shellCmd(char **cmd, int count){
 			return;
 		}
 
-		send(clientsockfd, "REFRESH", 7, 0);
+		send(clientsockfd, "REFRESH", 7, 0);  //send msg to the server for refresh list of currenlty logged-in clients
 		char update[BUFLEN];
-		recv(clientsockfd, update, BUFLEN, 0);
-		unpack_store(update);
-		cse4589_print_and_log("[%s:SUCCESS]\n", cmd[0]);
-		
+		recv(clientsockfd, update, BUFLEN, 0);  //server sends list of currently logged in clients
+		unpack_store(update);   //unpack and store the details from the list in the data structure 
+		cse4589_print_and_log("[%s:SUCCESS]\n", cmd[0]);		
 		cse4589_print_and_log("[%s:END]\n", cmd[0]);
 		
 		//process msg to update list
-	}else if(strcmp(cmd[0], "SEND") == 0){
-		if(role != 0 || !loggedin || !isValidAddr(cmd[1], "8888")){
-			//fail
-			cse4589_print_and_log("[%s:ERROR]\n", cmd[0]);
-			
-			cse4589_print_and_log("[%s:END]\n", cmd[0]);
-			
+	}else if(strcmp(cmd[0], "SEND") == 0){ //CHECK - Has some part to be handled on the server side
+		if(isClient != 1 || !loggedin || !is_valid_IP(cmd[1]) || !in_Cur_LogClients(cmd[1])){
+			//on failure
+			cse4589_print_and_log("[%s:ERROR]\n", cmd[0]);			
+			cse4589_print_and_log("[%s:END]\n", cmd[0]);			
 			return;
 		}
 
-		// check if recvier is in local list
-		int flag = 0;
-		for (int i=0; i<connIndex; i++) {
-			if (strcmp(cmd[1], connections[i].remote_addr) == 0) {
-				flag = 1;
-				break;
-			}
-		}
-		if(flag == 0) {
-			//fail
-			cse4589_print_and_log("[%s:ERROR]\n", cmd[0]);
-			
-			cse4589_print_and_log("[%s:END]\n", cmd[0]);
-			
-			return;
-		}
-
-		char msg[MSGLEN] = "";
-		for (int i=2;i<count;i++){
+		char msg[MSGLEN] = "";    //initialize a string of length 256
+		// loop concatenates each chunk of sent msg to the string msg
+		for (int i=2;i<count;i++){  
 			strcat(msg, cmd[i]);
 			if(i != count-1) strcat(msg, " ");
 		}
 
+		//Generating the command to be sent to the server for being to desired client
 		char buf[BUFLEN] = "";
 		strcat(buf, cmd[0]);
 		strcat(buf, " ");
 		strcat(buf, cmd[1]);
 		strcat(buf, " ");
 		strcat(buf, msg);
-		send(clientsockfd, buf, sizeof(buf), 0);// sizeof buf  also works?
+		send(clientsockfd, buf, sizeof(buf), 0);  //send msg to the server
 
 		char res[10];
-		recv(clientsockfd, res, 10, 0);
+		recv(clientsockfd, res, 10, 0);  //response from the server
 		//debug
-	//  printf("--%s--\n", res);
+		//printf("--%s--\n", res);
 		if (strcmp(res, "FAIL") == 0) {
-			//fail
-			cse4589_print_and_log("[%s:ERROR]\n", cmd[0]);
-			
-			cse4589_print_and_log("[%s:END]\n", cmd[0]);
-			
+			//on failure
+			cse4589_print_and_log("[%s:ERROR]\n", cmd[0]);			
+			cse4589_print_and_log("[%s:END]\n", cmd[0]);			
 		}else{
-			//success
-			cse4589_print_and_log("[%s:SUCCESS]\n", cmd[0]);
-			
-			cse4589_print_and_log("[%s:END]\n", cmd[0]);
-			
+			//on success
+			cse4589_print_and_log("[%s:SUCCESS]\n", cmd[0]);			
+			cse4589_print_and_log("[%s:END]\n", cmd[0]);			
 		}
 
-	}else if (strcmp(cmd[0], "BROADCAST") == 0){
-		if (role != 0 || !loggedin) {
-			//fail
-			cse4589_print_and_log("[%s:ERROR]\n", cmd[0]);
-			
-			cse4589_print_and_log("[%s:END]\n", cmd[0]);
-			
+	}else if (strcmp(cmd[0], "BROADCAST") == 0){ //CHECK - Has some exceptions to be handled on the server side
+		if (isClient != 1 || !loggedin) {
+			//on failure
+			cse4589_print_and_log("[%s:ERROR]\n", cmd[0]);			
+			cse4589_print_and_log("[%s:END]\n", cmd[0]);			
 			return;
 		}
-//        if (count != 2) {
+//        if (count != 2) {   
+			//CHECK we can also check the count of chunks in the command (will not work as the msg can be divided in n chunks)
 //            //fail
 //            return;
 //        }
 
+		//Generating the msg entered on the terminal
 		char msg[MSGLEN] = "";
 		for (int i=1;i<count;i++){
 			strcat(msg, cmd[i]);
 			if(i != count-1) strcat(msg, " ");
 		}
 
+		//Generating the command entered on the terminal
 		char buf[BUFLEN];
 		strcpy(buf, cmd[0]);
 		strcat(buf, " ");
 		strcat(buf, msg);
-		send(clientsockfd, buf, BUFLEN, 0);
-		cse4589_print_and_log("[%s:SUCCESS]\n", cmd[0]);
-		
+		send(clientsockfd, buf, BUFLEN, 0);   //send the command to the server
+		// rcv not written, also if rcv returns fail not handled  //CHECK
+		cse4589_print_and_log("[%s:SUCCESS]\n", cmd[0]);		
 		cse4589_print_and_log("[%s:END]\n", cmd[0]);
 		
-	}else if(strcmp(cmd[0], "BLOCK") == 0){
-		if (role != 0 || !loggedin || !isValidAddr(cmd[1], "8888") || count != 2) {
-			//fail
-			cse4589_print_and_log("[%s:ERROR]\n", cmd[0]);
-			
-			cse4589_print_and_log("[%s:END]\n", cmd[0]);
-			
+	}else if(strcmp(cmd[0], "BLOCK") == 0){ //CHECK - Has some part to be handled on the server side
+		if (isClient != 1 || !loggedin || !is_valid_IP(cmd[1]) || count != 2 || !in_Cur_LogClients(cmd[1])) { //CHECK if already blocked
+			//on failure
+			cse4589_print_and_log("[%s:ERROR]\n", cmd[0]);			
+			cse4589_print_and_log("[%s:END]\n", cmd[0]);			
 			return;
 		}
 
-		// check if it's in local list
-		int flag = 0;
-		for(int i=0;i<connIndex;i++){
-			if(strcmp(connections[i].remote_addr, cmd[1]) == 0){
-				flag = 1;
-				break;
-			}
-		}
-		if(flag == 0){
-			//fail
-			cse4589_print_and_log("[%s:ERROR]\n", cmd[0]);
-			
-			cse4589_print_and_log("[%s:END]\n", cmd[0]);
-			
-			return;
-		}
-		// bug
+		//Generating the command entered on the terminal
 		char buf[BUFLEN];
 		strcpy(buf, cmd[0]);
 		strcat(buf, " ");
 		strcat(buf, cmd[1]);
-		send(clientsockfd, buf, BUFLEN, 0);
+
+		send(clientsockfd, buf, BUFLEN, 0);  //send the command to the server
 
 		char res[10];
-		recv(clientsockfd, res, 10, 0);
+		recv(clientsockfd, res, 10, 0);  //server response
 		if(strcmp(res, "FAIL") == 0){
-			//fail
-			cse4589_print_and_log("[%s:ERROR]\n", cmd[0]);
-			
-			cse4589_print_and_log("[%s:END]\n", cmd[0]);
-			
+			//on failure
+			cse4589_print_and_log("[%s:ERROR]\n", cmd[0]);			
+			cse4589_print_and_log("[%s:END]\n", cmd[0]);			
 		}else{
-			//success
-			cse4589_print_and_log("[%s:SUCCESS]\n", cmd[0]);
-			
-			cse4589_print_and_log("[%s:END]\n", cmd[0]);
-			
+			//on success
+			cse4589_print_and_log("[%s:SUCCESS]\n", cmd[0]);			
+			cse4589_print_and_log("[%s:END]\n", cmd[0]);			
 		}
 
-	}else if(strcmp(cmd[0], "UNBLOCK") == 0){
-		if(role != 0 || !loggedin || !isValidAddr(cmd[1], "8888") || count != 2){
-			//fail
-			cse4589_print_and_log("[%s:ERROR]\n", cmd[0]);
-			
-			cse4589_print_and_log("[%s:END]\n", cmd[0]);
-			
+	}else if(strcmp(cmd[0], "UNBLOCK") == 0){ //CHECK - Has some part to be handled on the server side
+		if(isClient != 1 || !loggedin || !is_valid_IP(cmd[1]) || count != 2 || !in_Cur_LogClients(cmd[1]){ //CHECK if already unblocked
+			//on failure
+			cse4589_print_and_log("[%s:ERROR]\n", cmd[0]);			
+			cse4589_print_and_log("[%s:END]\n", cmd[0]);			
 			return;
 		}
 
-		//check local list
-		int flag = 0;
-		for(int i=0;i<connIndex;i++){
-			if(strcmp(connections[i].remote_addr, cmd[1]) == 0){
-				flag = 1;
-				break;
-			}
-		}
-		if(flag == 0){
-			//fail
-			cse4589_print_and_log("[%s:ERROR]\n", cmd[0]);
-			
-			cse4589_print_and_log("[%s:END]\n", cmd[0]);
-			
-			return;
-		}
-
+		//Generating the command entered on the terminal
 		char buf[BUFLEN];
 		strcpy(buf, cmd[0]);
 		strcat(buf, " ");
 		strcat(buf, cmd[1]);
-		send(clientsockfd, buf, BUFLEN, 0);
+
+		send(clientsockfd, buf, BUFLEN, 0); //send the command to the server
 
 		char res[10];
-		recv(clientsockfd, res, 10, 0);
+		recv(clientsockfd, res, 10, 0); //server response
 		if(strcmp(res, "FAIL") == 0){
-			//fail
-			cse4589_print_and_log("[%s:ERROR]\n", cmd[0]);
-			
-			cse4589_print_and_log("[%s:END]\n", cmd[0]);
-			
+			//on failure
+			cse4589_print_and_log("[%s:ERROR]\n", cmd[0]);			
+			cse4589_print_and_log("[%s:END]\n", cmd[0]);			
 		}else{
-			//success
-			cse4589_print_and_log("[%s:SUCCESS]\n", cmd[0]);
-			
-			cse4589_print_and_log("[%s:END]\n", cmd[0]);
-			
+			//on success
+			cse4589_print_and_log("[%s:SUCCESS]\n", cmd[0]);			
+			cse4589_print_and_log("[%s:END]\n", cmd[0]);			
 		}
 
-	}else if(strcmp(cmd[0], "EXIT") == 0){
-		char buf[BUFLEN] = "EXIT";
-		send(clientsockfd, buf, BUFLEN, 0);
-		loggedin = 0;
-		close(clientsockfd);
-		FD_CLR(clientsockfd, &master);
-		cse4589_print_and_log("[%s:SUCCESS]\n", cmd[0]);
-		
-		cse4589_print_and_log("[%s:END]\n", cmd[0]);
-		
-		exit(0);
-	}else if(strcmp(cmd[0], "LOGOUT") == 0){
-		if(!loggedin){
-			//fail
-		cse4589_print_and_log("[%s:ERROR]\n", cmd[0]);
-		
-		cse4589_print_and_log("[%s:END]\n", cmd[0]);
-		
-		return;
+	}else if(strcmp(cmd[0], "LOGOUT") == 0){//CHECK - Has some part to be handled on the server side
+		if(isClient && !loggedin){
+			//on failure
+			cse4589_print_and_log("[%s:ERROR]\n", cmd[0]);		
+			cse4589_print_and_log("[%s:END]\n", cmd[0]);		
+			return;
 		}
 		char buf[BUFLEN] = "LOGOUT";
-		send(clientsockfd, buf, BUFLEN, 0); //16?
-		loggedin = 0;
-		close(clientsockfd);
-		FD_CLR(clientsockfd, &master);
-		cse4589_print_and_log("[%s:SUCCESS]\n", cmd[0]);
-		
+		send(clientsockfd, buf, BUFLEN, 0); //send the command to the server
+		loggedin = 0;         //logged-out
+		close(clientsockfd);  //close the socket
+		FD_CLR(clientsockfd, &master);  //clear closed socket from master list
+		cse4589_print_and_log("[%s:SUCCESS]\n", cmd[0]);		
 		cse4589_print_and_log("[%s:END]\n", cmd[0]);
-		
+		// server response not present, also error msg not handled 
+
+	}else if(strcmp(cmd[0], "EXIT") == 0){ //CHECK - Has some part to be handled on the server side
+		char buf[BUFLEN] = "EXIT";
+		send(clientsockfd, buf, BUFLEN, 0); //send the command to the server
+		loggedin = 0;         //logged-out
+		close(clientsockfd);  //close the socket
+		FD_CLR(clientsockfd, &master);  //clear closed socket from master list
+		cse4589_print_and_log("[%s:SUCCESS]\n", cmd[0]);		
+		cse4589_print_and_log("[%s:END]\n", cmd[0]);		
+		exit(0); //terminate the code
+		// server response not present, also error msg not handled 
 
 	}else if(strcmp(cmd[0], "STATISTICS") == 0){
 		if(role != 1){
@@ -1131,7 +1103,7 @@ void start(void){
 							}
 						}
 					}
-					/*##### CAN BE CLUBBED TO ONE FUNCTION - START #####*/
+					/*##### CAN BE CLUBBED TO ONE FUNCTION - END #####*/
 
 					/*##### CODE TO BE CHECKED FROM HERE #####*/
 					// afterwards redirect the array to newly connected client
