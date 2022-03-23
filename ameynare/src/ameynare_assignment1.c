@@ -129,6 +129,16 @@ int is_valid_IP(char *ip) {
 	return 1;
 }
 
+int strToNum(const char* s){
+	int ret = 0;
+	for (int i=0;i<strlen(s);i++){
+		int t = s[i]-'0';
+		if  (t<0 || t >9) return -1;
+		ret = ret*10+t;
+	}
+	return ret;
+}
+
 int bind_socket(char port_str)
 {	
 	if(!is_valid_port(port_str)){
@@ -163,38 +173,38 @@ int bind_socket(char port_str)
     }
 }
 
-int connect_host(char *server_ip, char *server_port)
-{	
-    struct addrinfo hints, *servinfo, *p;
-	memset(&hints, 0, sizeof hints);
-	hints.ai_family = AF_INET;
-	hints.ai_socktype = SOCK_STREAM;
+// int connect_host(char *server_ip, char *server_port)
+// {	
+//     struct addrinfo hints, *servinfo, *p;
+// 	memset(&hints, 0, sizeof hints);
+// 	hints.ai_family = AF_INET;
+// 	hints.ai_socktype = SOCK_STREAM;
 
-	if(getaddrinfo(server_ip, server_port, &hints, &servinfo) != 0){
-		//fails to get the addr info
-		cse4589_print_and_log("[%s:ERROR]\n", cmd[0]);			
-		cse4589_print_and_log("[%s:END]\n", cmd[0]);			
-		return;
-	}
-	for(p=servinfo; p!= NULL; p=p->ai_next){
-		if((clientsockfd = socket(p->ai_family, p->ai_socktype, p->ai_protocol)) == -1){
-			continue;
-		}
-		if(connect(clientsockfd, p->ai_addr, p->ai_addrlen) == -1){
-			close(clientsockfd);
-			continue;
-		}
-		break;
-	}
-	if(p == NULL){
-		//fail
-		cse4589_print_and_log("[%s:ERROR]\n", cmd[0]);			
-		cse4589_print_and_log("[%s:END]\n", cmd[0]);			
-		return;
-	}
-	freeaddrinfo(servinfo);
-    return clientsockfd;
-}
+// 	if(getaddrinfo(server_ip, server_port, &hints, &servinfo) != 0){
+// 		//fails to get the addr info
+// 		cse4589_print_and_log("[%s:ERROR]\n", cmd[0]);			
+// 		cse4589_print_and_log("[%s:END]\n", cmd[0]);			
+// 		return;
+// 	}
+// 	for(p=servinfo; p!= NULL; p=p->ai_next){
+// 		if((clientsockfd = socket(p->ai_family, p->ai_socktype, p->ai_protocol)) == -1){
+// 			continue;
+// 		}
+// 		if(connect(clientsockfd, p->ai_addr, p->ai_addrlen) == -1){
+// 			close(clientsockfd);
+// 			continue;
+// 		}
+// 		break;
+// 	}
+// 	if(p == NULL){
+// 		//fail
+// 		cse4589_print_and_log("[%s:ERROR]\n", cmd[0]);			
+// 		cse4589_print_and_log("[%s:END]\n", cmd[0]);			
+// 		return;
+// 	}
+// 	freeaddrinfo(servinfo);
+//     return clientsockfd;
+// }
 
 void get_IP()
 {	
@@ -234,15 +244,6 @@ void get_IP()
     close(sockfd);  //closes the socket
 }
 
-int strToNum(const char* s){
-	int ret = 0;
-	for (int i=0;i<strlen(s);i++){
-		int t = s[i]-'0';
-		if  (t<0 || t >9) return -1;
-		ret = ret*10+t;
-	}
-	return ret;
-}
 
 // check if receiver of the msg is in local list of the client
 int in_Cur_LogClients(char *rcv_client_ip){
@@ -795,13 +796,13 @@ void shellCmd(char **cmd, int count){
 	/*CHECKED BLOCKED COMMAND BY ALOK TRIPATHY*/
 	else if(strcmp(cmd[0], "BLOCKED") == 0)
 	{
-         if(role != 1 || count != 2 || !isValidAddr(cmd[1], "8888"))
+         if(isClient != 1 || count != 2 || !is_valid_IP(cmd[1]))
 		 {
              //fail
 			cse4589_print_and_log("[%s:ERROR]\n", cmd[0]);
-			fflush(stdout);
+		
 		  	cse4589_print_and_log("[%s:END]\n", cmd[0]);
-			fflush(stdout);
+			
             return;
          }
          int flag = 0;
@@ -811,12 +812,12 @@ void shellCmd(char **cmd, int count){
 			 {
                  flag = 1;
 				 cse4589_print_and_log("[%s:SUCCESS]\n", cmd[0]);
-				 fflush(stdout);
+				
                  for (int j=0; j<connections[i].blockindex; j++) 
 				 {
                      //cse4589
                      cse4589_print_and_log("%-5d%-35s%-20s%-8d\n", j+1, connections[i].blockedIPs[j]->hostname, connections[i].blockedIPs[j]->remote_addr, connections[i].blockedIPs[j]->portNum);
-					 fflush(stdout);
+					 
                  }
                  break;
              }
@@ -825,13 +826,13 @@ void shellCmd(char **cmd, int count){
          if(flag == 0){
              //fail
 			cse4589_print_and_log("[%s:ERROR]\n", cmd[0]);
-			fflush(stdout);
+			
 		  	cse4589_print_and_log("[%s:END]\n", cmd[0]);
-			fflush(stdout);
+			
             return;
          }else{
 		  	cse4589_print_and_log("[%s:END]\n", cmd[0]);
-			fflush(stdout);
+			
 		 }
      }
 
