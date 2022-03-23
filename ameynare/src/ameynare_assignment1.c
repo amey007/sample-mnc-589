@@ -39,7 +39,7 @@
 
 #include "../include/global.h"
 #include "../include/logger.h"
-#include "../src/logger.c"
+//#include "../src/logger.c"
 
 #define CMD_SIZE 100
 #define BUFLEN 1024
@@ -88,7 +88,7 @@ int maxfd;
 
 
 /*-----------------------HELPER FUNCTIONS-----------------------*/
-int is_valid_port(char *input) {
+int is_valid_port(const char *input) {
 	int i = 0;
 	if(input[i] == '-') { return 0; }
 	for(; input[i] != '\0'; i++) {
@@ -139,38 +139,34 @@ int strToNum(const char* s){
 	return ret;
 }
 
-int bind_socket(char port_str)
+int bind_socket(const char *port_str)
 {	
 	if(!is_valid_port(port_str)){
 		perror("Invalid Port Number entered!");
 	}
 	int port = strToNum(port_str);  //Converts the port from char to int
-
-	struct sockaddr_in my_addrs;
-	int fdsocket = 0;
-	fdsocket = socket(AF_INET, SOCK_STREAM, 0);// return socket file descriptor
-    if(fdsocket < 0)
-    {
-       perror("Failed to create socket");
-       return 0;
-    }
-
-    //setting up client socket
-    my_addrs.sin_family=AF_INET;
-    my_addrs.sin_addr.s_addr=INADDR_ANY;
-    my_addrs.sin_port=htons(port);
-    int optval=1;
-    setsockopt(fdsocket, SOL_SOCKET, SO_REUSEPORT, &optval, sizeof(optval));
-    if(bind(fdsocket, (struct  sockaddr*) &my_addrs, sizeof(struct sockaddr_in)) == 0)
-    {
-    	printf("\nclient binded to port correctly\n");
-    	return fdsocket;
-    }
-    else
-    {
-    	printf("\nError in binding client port\n");
-    	return 0;
-    }
+	int sockfd =0;
+	struct sockaddr_in my_addr;
+	if((sockfd=socket(AF_INET,SOCK_STREAM,0))==-1)
+	{
+		perror("socket");
+		// exit(EXIT_FAILURE);
+	}
+	printf("Socket binded %d", sockfd);
+	my_addr.sin_family = AF_INET;
+	my_addr.sin_port = htons(port);
+	my_addr.sin_addr.s_addr = INADDR_ANY; /* auto-fill with my IP */
+	bzero(&(my_addr.sin_zero), 8);		  
+	
+	int bindfd = 0;
+	if((bindfd = bind(sockfd,(struct sockaddr *)&my_addr,sizeof(struct sockaddr)))==-1)
+	{
+		perror("bind");
+		// exit(EXIT_FAILURE);
+	}
+	printf("Socket binded %d", bindfd);
+	
+	 return bindfd;
 }
 
 // int connect_host(char *server_ip, char *server_port)
@@ -520,7 +516,7 @@ void shellCmd(char **cmd, int count){
 		hints.ai_family = AF_INET;
 		hints.ai_socktype = SOCK_STREAM;
 
-		if(getaddrinfo(server_ip, server_port, &hints, &servinfo) != 0){
+		if(getaddrinfo(cmd[0], cmd[1], &hints, &servinfo) != 0){
 			//fails to get the addr info
 			cse4589_print_and_log("[%s:ERROR]\n", cmd[0]);			
 			cse4589_print_and_log("[%s:END]\n", cmd[0]);			
@@ -1375,8 +1371,6 @@ int main(int argc, char **argv)
 
 	// variable for socket file descriptor
 	int sock_fd = 0;
-	//int fdsocket = 0;
-
 
 	/*Start Here*/
 	//Initiaties the further steps only when the segment is passed
@@ -1388,9 +1382,10 @@ int main(int argc, char **argv)
 			// TODO - ALOK
 			isClient = 0;
 			strcpy(listenerPort, argv[2]);
-			localsockfd = bind_socket(listenerPort);
+			localsockfd = bind_socket(argv[2]);
 			if(listen(localsockfd, BACKLOG) == -1)
 			{
+				perror("listen");
 				exit(-1);
 			}
 			start();
@@ -1402,7 +1397,12 @@ int main(int argc, char **argv)
 		{
 			isClient = 1;
 			strcpy(listenerPort, argv[2]);
-			localsockfd = bind_socket(listenerPort);
+			if((localsockfd=socket(AF_INET,SOCK_STREAM,0))==-1)
+			{
+				perror("socket");
+				exit(-1);
+			}
+			printf("Client socket created %d", localsockfd);
 			// prep(argv[2]);
 			start();
 		}
