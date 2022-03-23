@@ -68,7 +68,7 @@ struct connection {
 
 char bufferedmsg[BUFLEN] = "";
 
-int isClient = 0;   //// This a variable is used as a flag to indicate client or server. 0 -> Server and 1 -> Client
+int isClient = 1;   //// This a variable is used as a flag to indicate client or server. 0 -> Server and 1 -> Client
 int localsockfd;
 int clientsockfd;
 //int flag = 0;
@@ -97,7 +97,7 @@ int is_valid_port(const char *input) {
 	return 1;
 }
 
-int is_valid_IP(char *ip) { 	
+int is_valid_IP(const char *ip) { 	
 	char temp[16]; 
 	memset(temp, '\0', 16);
 	strcpy(temp, ip); 
@@ -145,9 +145,10 @@ int bind_socket(const char *port_str)
 		perror("Invalid Port Number entered!");
 	}
 	int port = strToNum(port_str);  //Converts the port from char to int
-	int sockfd =0;
 	struct sockaddr_in my_addr;
-	if((sockfd=socket(AF_INET,SOCK_STREAM,0))==-1)
+	int sockfd = socket(AF_INET,SOCK_STREAM,0);
+	
+	if(sockfd == -1)
 	{
 		perror("socket");
 		// exit(EXIT_FAILURE);
@@ -158,15 +159,22 @@ int bind_socket(const char *port_str)
 	my_addr.sin_addr.s_addr = INADDR_ANY; /* auto-fill with my IP */
 	bzero(&(my_addr.sin_zero), 8);		  
 	
-	int bindfd = 0;
-	if((bindfd = bind(sockfd,(struct sockaddr *)&my_addr,sizeof(struct sockaddr)))==-1)
+	int bindfd =  bind(sockfd,(struct sockaddr *)&my_addr,sizeof(struct sockaddr));
+	if(bindfd == -1)
 	{
 		perror("bind");
 		// exit(EXIT_FAILURE);
 	}
 	printf("Socket binded %d", bindfd);
+
+	int localsockfd = listen(bindfd,BACKLOG);
+	if(localsockfd ==-1)
+	{
+		perror("listen");
+		printf("Socket Listening started %d", localsockfd);
+	}
 	
-	 return bindfd;
+	return localsockfd;
 }
 
 // int connect_host(char *server_ip, char *server_port)
@@ -231,11 +239,12 @@ void get_IP()
     {
     	cse4589_print_and_log("[IP:SUCCESS]\n");
         cse4589_print_and_log("IP:%s\n",ip_addr);
+		cse4589_print_and_log("[IP:END]\n");
     }
     else
     {
     	cse4589_print_and_log("[IP:ERROR]\n");
-
+		cse4589_print_and_log("[IP:END]\n");
     }
     close(sockfd);  //closes the socket
 }
@@ -503,10 +512,17 @@ void shellCmd(char **cmd, int count){
 		
 		
 	}else if(strcmp(cmd[0], "LOGIN") == 0){ //CHECK - Has some part to be handled on the server side
+		printf("Entered LOGIN loop");
+		printf("%d\n",is_valid_IP(cmd[1]));
+		printf("%d\n",is_valid_IP(cmd[1]));
+		printf("%d\n",loggedin);
+		printf("%d\n",isClient);
+		printf("%d\n",count);
 		if(isClient != 1 || count != 3 || !is_valid_IP(cmd[1]) || !is_valid_port(cmd[2]) || loggedin){
 			// only when fails to meet the required conditions
+			printf("Error in exception catch");	
 			cse4589_print_and_log("[%s:ERROR]\n", cmd[0]);			
-			cse4589_print_and_log("[%s:END]\n", cmd[0]);			
+			cse4589_print_and_log("[%s:END]\n", cmd[0]);					
 			return;
 		}
 
@@ -518,8 +534,9 @@ void shellCmd(char **cmd, int count){
 
 		if(getaddrinfo(cmd[0], cmd[1], &hints, &servinfo) != 0){
 			//fails to get the addr info
+			printf("Error getaddrinfo");
 			cse4589_print_and_log("[%s:ERROR]\n", cmd[0]);			
-			cse4589_print_and_log("[%s:END]\n", cmd[0]);			
+			cse4589_print_and_log("[%s:END]\n", cmd[0]);					
 			return;
 		}
 		for(p=servinfo; p!= NULL; p=p->ai_next){
@@ -534,17 +551,23 @@ void shellCmd(char **cmd, int count){
 		}
 		if(p == NULL){
 			//fail
+			printf("Error");
 			cse4589_print_and_log("[%s:ERROR]\n", cmd[0]);			
-			cse4589_print_and_log("[%s:END]\n", cmd[0]);			
+			cse4589_print_and_log("[%s:END]\n", cmd[0]);
+			printf("Error");			
 			return;
 		}
 		freeaddrinfo(servinfo);
 		
+		printf("Socket conencted");
 		send(clientsockfd, listenerPort, sizeof listenerPort, 0); //sends port number to the server to fetch its buffered messages and list of logged-in clients 
+
+		printf("Send to Server");
 
 		// Stores the data provided by server on successful registration
 		char buf[BUFLEN];
 		recv(clientsockfd, buf, BUFLEN, 0);  //receives the list of logged-in clients from the server
+		printf("Received from Server");
 		unpack_store(buf);                 
 
 		char unread[BUFLEN];
@@ -1068,18 +1091,23 @@ void start(void){
 	maxfd = localsockfd;
 
 	while (1) {
+
+		// //shell command prompt 
+		// printf("[PA1-Server@CSE489/589]$ ");
+
 		read_fds = master;
 		// select() ->  indicates which of the specified file descriptors is ready for reading, blocks if none is ready
 		if(select(maxfd+1, &read_fds, NULL, NULL, NULL) == -1){
 			perror("select() error"); 
 			exit(-1);
 		}
-
+		int i = 0;
 		// fetching the available socket 
-		for(int i=0 ;i < maxfd+1; i++){
+		for(i=0 ;i < maxfd+1; i++){
 			if(FD_ISSET(i, &read_fds)){
 				// This section of code handles the terminal input and fetches the command and input arguments
 				if(i == STD_IN){
+					printf("i == STD_IN");
 					char *cmd = (char *)malloc(sizeof(char)*CMD_SIZE);
 					memset(cmd, '\0', CMD_SIZE);
 					fgets(cmd, CMD_SIZE-1, stdin);
@@ -1101,6 +1129,8 @@ void start(void){
 
 				}else if(i == localsockfd && isClient == 0){ //In server mode
 					// process new connections, use a data structure to store info
+
+					printf("i == localsockfd && isClient == 0");
 					struct sockaddr_storage remoteaddr;
 					socklen_t len = sizeof(remoteaddr);
 					int newfd = accept(localsockfd, (struct sockaddr *)&remoteaddr, &len);
@@ -1232,6 +1262,8 @@ void start(void){
 					send(newfd, sendingmsg, BUFLEN, 0);  //send msg to client
 
 				}else if(i == clientsockfd && isClient == 1){ //In client mode
+
+					printf("i == clientsockfd && isClient == 1");
 					char buf[BUFLEN];
 					int nbytes = recv(i, buf, sizeof buf, 0);  					
 					char flag[10]="";
@@ -1367,7 +1399,7 @@ int main(int argc, char **argv)
 	
 	/*Start Here*/
 	// This a variable is used as a flag to indicate client or server. 0 -> Server and 1 -> Client
-	int isClient = 0;
+	//int isClient = 0;
 
 	// variable for socket file descriptor
 	int sock_fd = 0;
@@ -1382,12 +1414,13 @@ int main(int argc, char **argv)
 			// TODO - ALOK
 			isClient = 0;
 			strcpy(listenerPort, argv[2]);
-			localsockfd = bind_socket(argv[2]);
-			if(listen(localsockfd, BACKLOG) == -1)
-			{
-				perror("listen");
-				exit(-1);
-			}
+			// localsockfd = bind_socket(argv[2]);
+			// if(listen(localsockfd, BACKLOG) == -1)
+			// {
+			// 	perror("listen");
+			// 	exit(-1);
+			// }
+			prep(argv[2]);
 			start();
 		}
 
@@ -1397,13 +1430,13 @@ int main(int argc, char **argv)
 		{
 			isClient = 1;
 			strcpy(listenerPort, argv[2]);
-			if((localsockfd=socket(AF_INET,SOCK_STREAM,0))==-1)
-			{
-				perror("socket");
-				exit(-1);
-			}
-			printf("Client socket created %d", localsockfd);
-			// prep(argv[2]);
+			// if((localsockfd=socket(AF_INET,SOCK_STREAM,0))==-1)
+			// {
+			// 	perror("socket");
+			// 	exit(-1);
+			// }
+			// printf("Client socket created %d", localsockfd);
+			prep(argv[2]);
 			start();
 		}
 		else 
