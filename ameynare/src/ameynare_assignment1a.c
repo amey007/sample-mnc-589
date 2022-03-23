@@ -75,7 +75,7 @@ int clientsockfd;
 char listenerPort[PORTSTRLEN]; 
 struct connection connections[4];
 int connIndex = 0;
-int loggedin = 0; // a flag to indicate log in, avoid multible log in
+int loggedin = 0; // a flag to indicate log in, avoid multiple log in
 
 fd_set master, read_fds;
 int maxfd;
@@ -745,7 +745,7 @@ void shellCmd(char **cmd, int count){
 
 	}*/
 	
-	/*CHECKED STATISTICS COMMAND*/
+	/*CHECKED STATISTICS COMMAND BY ALOK TRIPATHY*/
 	else if (strcmp(cmd[0],"STATISTICS") == 0)
 	{
 		if (role == 1)
@@ -777,48 +777,51 @@ void shellCmd(char **cmd, int count){
 			return;
 		}
 	}
-	
+
+	/*CHECKED BLOCKED COMMAND BY ALOK TRIPATHY*/
 	else if(strcmp(cmd[0], "BLOCKED") == 0)
 	{
-		if(role != 1 || count != 2 || !isValidAddr(cmd[1], "8888"))
-		{
-			//fail
+         if(role != 1 || count != 2 || !isValidAddr(cmd[1], "8888"))
+		 {
+             //fail
 			cse4589_print_and_log("[%s:ERROR]\n", cmd[0]);
-		
-			cse4589_print_and_log("[%s:END]\n", cmd[0]);
-		
-			return;
-		}
-		int flag = 0;
-		for(int i=0;i<connIndex;i++)
-		{
-			if(strcmp(connections[i].remote_addr, cmd[1]) == 0)
-			{
-				flag = 1;
-				cse4589_print_and_log("[%s:SUCCESS]\n", cmd[0]);
-				
-				for (int j=0; j<connections[i].blockindex; j++) 
-				{
-					//cse4589
-					cse4589_print_and_log("%-5d%-35s%-20s%-8d\n", j+1, connections[i].blockedIPs[j]->hostname, connections[i].blockedIPs[j]->remote_addr, connections[i].blockedIPs[j]->portNum);
-					
-				}
-				break;
-			}
-		}
+			fflush(stdout);
+		  	cse4589_print_and_log("[%s:END]\n", cmd[0]);
+			fflush(stdout);
+            return;
+         }
+         int flag = 0;
+         for(int i=0;i<connIndex;i++)
+		 {
+             if(strcmp(connections[i].remote_addr, cmd[1]) == 0)
+			 {
+                 flag = 1;
+				 cse4589_print_and_log("[%s:SUCCESS]\n", cmd[0]);
+				 fflush(stdout);
+                 for (int j=0; j<connections[i].blockindex; j++) 
+				 {
+                     //cse4589
+                     cse4589_print_and_log("%-5d%-35s%-20s%-8d\n", j+1, connections[i].blockedIPs[j]->hostname, connections[i].blockedIPs[j]->remote_addr, connections[i].blockedIPs[j]->portNum);
+					 fflush(stdout);
+                 }
+                 break;
+             }
+         }
 
-	}
+         if(flag == 0){
+             //fail
+			cse4589_print_and_log("[%s:ERROR]\n", cmd[0]);
+			fflush(stdout);
+		  	cse4589_print_and_log("[%s:END]\n", cmd[0]);
+			fflush(stdout);
+            return;
+         }else{
+		  	cse4589_print_and_log("[%s:END]\n", cmd[0]);
+			fflush(stdout);
+		 }
+     }
 
-	if(role != 1 || count != 2 || !isValidAddr(cmd[1], "8888")){
-			//fail
-		cse4589_print_and_log("[%s:ERROR]\n", cmd[0]);
-		
-		cse4589_print_and_log("[%s:END]\n", cmd[0]);
-		
-		return;
-		}
-
-}
+ }
 
 
 
@@ -990,37 +993,67 @@ void response(char **arguments, int count, int caller){  //CHECK caller - sockfd
 		}
 		send(caller, "SUCCESS", 7, 0);
 
-	}else if(strcmp(arguments[0], "EXIT") == 0){
-		int target;
-		for(target=0;target<connIndex;target++){
-			if(connections[target].connsockfd == caller){
+	}
+	
+	/*Checked by Alok Tripathy.*/
+	else if(strcmp("EXIT", arguments[0]) == 0)
+	{
+		int target = 0;
+		while(target<connIndex)
+		{
+			if(connections[target].connsockfd == caller)
+			{
 				close(connections[target].connsockfd);
 				FD_CLR(connections[target].connsockfd, &master);
+<<<<<<< Updated upstream
 				if(target == 3){  //last of the all 4 logged-in clients
 					connIndex--;
 					break;
 				}
 				for(int j=target+1;j<connIndex;j++){  //removes the details of the exited client
+=======
+				
+				if(target == 3)
+				{
+					connIndex--;
+					break;
+				}
+				
+				int j = target + 1;
+				while(j<connIndex)
+				{
+>>>>>>> Stashed changes
 					connections[j-1] = connections[j];
+					j++;
 				}
 				connIndex--;
 				break;
 			}
+			
+			target++;
 		}
-	}else if(strcmp(arguments[0], "LOGOUT") == 0){
-		for(int i=0;i<connIndex;i++){
-			if(connections[i].connsockfd == caller){
+	}
+
+	/* Checked by Alok Tripathy*/
+	else if(strcmp("LOGOUT",arguments[0]) == 0)
+	{
+		int i = 0;
+		while(i<connIndex)
+		{
+			if(connections[i].connsockfd == caller)
+			{
 				close(connections[i].connsockfd);
 				FD_CLR(connections[i].connsockfd, &master);
 				connections[i].status = logged_out;
 				break;
 			}
+			i++;
 		}
 	}
 }
 
 /*
-* Start select for cmd and connecting.
+*  select for cmd and connecting.
 */
 
 // Check the localsockfd and the clientsockfd conflict ##############################//
