@@ -25,7 +25,7 @@
 #include <string.h>
 // For uppercase (toupper function)
 // May not be needed
-//#include <ctype.h>
+#include <ctype.h>
 #include <unistd.h>
 //#include <errno.h>
 #include <sys/types.h>
@@ -132,9 +132,9 @@ int is_valid_IP(char *ip) {
 int bind_socket(char port_str)
 {	
 	if(!is_valid_port(port_str)){
-		perror("Invalid Port Number entered!")
+		perror("Invalid Port Number entered!");
 	}
-	int port = atoi(port_str);  //Converts the port from char to int
+	int port = strToNum(port_str);  //Converts the port from char to int
 
 	struct sockaddr_in my_addrs;
 	int fdsocket = 0;
@@ -164,7 +164,7 @@ int bind_socket(char port_str)
 }
 
 int connect_host(char *server_ip, char *server_port)
-{
+{	
     struct addrinfo hints, *servinfo, *p;
 	memset(&hints, 0, sizeof hints);
 	hints.ai_family = AF_INET;
@@ -214,8 +214,8 @@ void get_IP()
  
     connect( sockfd , (const struct sockaddr*) &saddr, sizeof(saddr) );  //
      
-    bzero(&saddr, sizeof(saddr))
-    int len = sizeof(saddr);
+    bzero(&saddr, sizeof(saddr));
+    socklen_t len = sizeof(saddr);
     getsockname(sockfd, (struct sockaddr*) &saddr, &len);  //retrieves the locally-bound name of the specified socket, store this address in the sockaddr structure
          
     char ip_addr[16];
@@ -258,7 +258,7 @@ int in_Cur_LogClients(char *rcv_client_ip){
 
 // target_ip is client to check if blocked in for client having recvsockfd
 int alreadyBlocked(char *target_ip, int recvsockfd){
-	in result = 0;
+	int result = 0;
 	for(int i =0; i<connIndex; i++){
 		if(connections[i].connsockfd == recvsockfd){
 			for(int j=0; j <connections[i].blockindex;j++){
@@ -273,7 +273,7 @@ int alreadyBlocked(char *target_ip, int recvsockfd){
 }
 
 // check if receiver has blocked the sender 
-int isBlocked(int sender_, char *receiver){
+int isBlocked(int sender, char *receiver){
 	int ret = 0;
 
 	char senderaddr[INET_ADDRSTRLEN] = "";
@@ -513,7 +513,35 @@ void shellCmd(char **cmd, int count){
 			return;
 		}
 
-		clientsockfd = connect_host(cmd[1], cmd[2]);  //creates and connect socket to the server
+		// clientsockfd = connect_host(cmd[1], cmd[2]);  //creates and connect socket to the server
+		struct addrinfo hints, *servinfo, *p;
+		memset(&hints, 0, sizeof hints);
+		hints.ai_family = AF_INET;
+		hints.ai_socktype = SOCK_STREAM;
+
+		if(getaddrinfo(server_ip, server_port, &hints, &servinfo) != 0){
+			//fails to get the addr info
+			cse4589_print_and_log("[%s:ERROR]\n", cmd[0]);			
+			cse4589_print_and_log("[%s:END]\n", cmd[0]);			
+			return;
+		}
+		for(p=servinfo; p!= NULL; p=p->ai_next){
+			if((clientsockfd = socket(p->ai_family, p->ai_socktype, p->ai_protocol)) == -1){
+				continue;
+			}
+			if(connect(clientsockfd, p->ai_addr, p->ai_addrlen) == -1){
+				close(clientsockfd);
+				continue;
+			}
+			break;
+		}
+		if(p == NULL){
+			//fail
+			cse4589_print_and_log("[%s:ERROR]\n", cmd[0]);			
+			cse4589_print_and_log("[%s:END]\n", cmd[0]);			
+			return;
+		}
+		freeaddrinfo(servinfo);
 		
 		send(clientsockfd, listenerPort, sizeof listenerPort, 0); //sends port number to the server to fetch its buffered messages and list of logged-in clients 
 
@@ -532,8 +560,8 @@ void shellCmd(char **cmd, int count){
 			q = strtok(NULL, "---");
 		}
 		for(int i=1;i<count; ){    //CHECK HERE why i=1, not 0
-			char client_ip = msgbuf[i];
-			char client_msg = msgbuf[2];
+			char *client_ip = msgbuf[i];
+			char *client_msg = msgbuf[2];
 			cse4589_print_and_log("[%s:SUCCESS]\n", "RECEIVED");			
 			cse4589_print_and_log("msg from:%s\n[msg]:%s\n", client_ip, client_msg);			
 			cse4589_print_and_log("[%s:END]\n", "RECEIVED");			
@@ -660,7 +688,7 @@ void shellCmd(char **cmd, int count){
 		}
 
 	}else if(strcmp(cmd[0], "UNBLOCK") == 0){ //CHECKED - Has some part to be handled on the server side
-		if(isClient != 1 || !loggedin || !is_valid_IP(cmd[1]) || count != 2 || !in_Cur_LogClients(cmd[1]) || !alreadyBlocked(cmd[1], clientsockfd)){ /
+		if(isClient != 1 || !loggedin || !is_valid_IP(cmd[1]) || count != 2 || !in_Cur_LogClients(cmd[1]) || !alreadyBlocked(cmd[1], clientsockfd)){ 
 			//on failure
 			cse4589_print_and_log("[%s:ERROR]\n", cmd[0]);			
 			cse4589_print_and_log("[%s:END]\n", cmd[0]);			
@@ -734,11 +762,11 @@ void shellCmd(char **cmd, int count){
 	/*CHECKED STATISTICS COMMAND BY ALOK TRIPATHY*/
 	else if (strcmp(cmd[0],"STATISTICS") == 0)
 	{
-		if (role == 1)
-		int temp[100]
+		if (isClient == 0)
 		{
+			int temp[100];
 			cse4589_print_and_log("[%s:SUCCESS]\n", cmd[0]);
-			int i = 0
+			int i = 0;
 			while(i < connIndex)
 			{
 				char tmp[20];
@@ -926,7 +954,7 @@ void response(char **arguments, int caller){  //CHECK caller - sockfd of the cur
 		}
 		
 		for(b =0; b<connIndex; b++){
-			if(strcmp(connections[b].remote_addr, arguments[1] == 0) break;      // connections[b]  -> client to be blocked
+			if(strcmp(connections[b].remote_addr, arguments[1]) == 0) break;      // connections[b]  -> client to be blocked
 		}
 
 		connections[i].blockedIPs[connections[i].blockindex++] = &connections[b];  //adding blocked client info to curr clients blockedIP data structure
