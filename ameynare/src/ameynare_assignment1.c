@@ -713,23 +713,36 @@ void shellCmd(char **cmd, int count){
 		cse4589_print_and_log("[%s:END]\n", cmd[0]);
 		
 	}else if(strcmp(cmd[0], "BLOCK") == 0){ //CHECKED - Has some part to be handled on the server side
-		if (isClient != 1 || !loggedin || !is_valid_IP(cmd[1]) || count != 2 || !in_Cur_LogClients(cmd[1]) || alreadyBlocked(cmd[1], clientsockfd)) { 
+
+		if (isClient != 1 || !loggedin || !is_valid_IP(cmd[1]) || count != 2) { 
+			// || !in_Cur_LogClients(cmd[1]) || alreadyBlocked(cmd[1], clientsockfd)) 
 			//on failure
+			printf("Entered exceptions \n");
+			printf("%d\n",isClient);
+			printf("%d\n",!loggedin);
+			printf("%d\n",!is_valid_IP(cmd[1]));
+			printf("%d\n",count);
+			printf("%d\n",!in_Cur_LogClients(cmd[1]));
+			printf("%d\n",alreadyBlocked(cmd[1], clientsockfd));			
 			cse4589_print_and_log("[%s:ERROR]\n", cmd[0]);			
 			cse4589_print_and_log("[%s:END]\n", cmd[0]);			
 			return;
 		}
-
+		printf("Cleared exceptions \n");
 		//Generating the command entered on the terminal
 		char buf[BUFLEN];
 		strcpy(buf, cmd[0]);
 		strcat(buf, " ");
 		strcat(buf, cmd[1]);
 
+		printf("msg gen \n");
 		send(clientsockfd, buf, BUFLEN, 0);  //send the command to the server
+		printf("msg sent to server \n");
 
 		char res[10];
 		recv(clientsockfd, res, 10, 0);  //server response
+		printf("msg received \n");
+
 		if(strcmp(res, "FAIL") == 0){
 			//on failure
 			cse4589_print_and_log("[%s:ERROR]\n", cmd[0]);			
@@ -784,6 +797,7 @@ void shellCmd(char **cmd, int count){
 		cse4589_print_and_log("[%s:END]\n", cmd[0]);
 		// server response not present, also error msg not handled 
 	// git push exit event
+
 	}else if(strcmp(cmd[0], "EXIT") == 0){
          char buf[BUFLEN] = "EXIT";
          send(clientsockfd, buf, BUFLEN, 0);
