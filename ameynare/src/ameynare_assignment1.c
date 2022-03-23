@@ -526,39 +526,66 @@ void shellCmd(char **cmd, int count){
 			return;
 		}
 
-		// clientsockfd = connect_host(cmd[1], cmd[2]);  //creates and connect socket to the server
-		struct addrinfo hints, *servinfo, *p;
-		memset(&hints, 0, sizeof hints);
-		hints.ai_family = AF_INET;
-		hints.ai_socktype = SOCK_STREAM;
+		// // clientsockfd = connect_host(cmd[1], cmd[2]);  //creates and connect socket to the server
+		// struct addrinfo hints, *servinfo, *p;
+		// memset(&hints, 0, sizeof hints);
+		// hints.ai_family = AF_INET;
+		// hints.ai_socktype = SOCK_STREAM;
 
-		if(getaddrinfo(cmd[0], cmd[1], &hints, &servinfo) != 0){
-			//fails to get the addr info
-			printf("Error getaddrinfo");
-			cse4589_print_and_log("[%s:ERROR]\n", cmd[0]);			
-			cse4589_print_and_log("[%s:END]\n", cmd[0]);					
-			return;
+		// if(getaddrinfo(cmd[0], cmd[1], &hints, &servinfo) != 0){
+		// 	//fails to get the addr info
+		// 	printf("Error getaddrinfo");
+		// 	cse4589_print_and_log("[%s:ERROR]\n", cmd[0]);			
+		// 	cse4589_print_and_log("[%s:END]\n", cmd[0]);					
+		// 	return;
+		// }
+		// for(p=servinfo; p!= NULL; p=p->ai_next){
+		// 	if((clientsockfd = socket(p->ai_family, p->ai_socktype, p->ai_protocol)) == -1){
+		// 		continue;
+		// 	}
+		// 	if(connect(clientsockfd, p->ai_addr, p->ai_addrlen) == -1){
+		// 		close(clientsockfd);
+		// 		continue;
+		// 	}
+		// 	break;
+		// }
+		// if(p == NULL){
+		// 	//fail
+		// 	printf("Error");
+		// 	cse4589_print_and_log("[%s:ERROR]\n", cmd[0]);			
+		// 	cse4589_print_and_log("[%s:END]\n", cmd[0]);
+		// 	printf("Error");			
+		// 	return;
+		// }
+		// freeaddrinfo(servinfo);
+
+		int server_port = atoi(cmd[2]); 
+		//int socketfd; 
+		struct sockaddr_in server_addr, client_addr;
+
+		clientsockfd = socket(AF_INET, SOCK_STREAM, 0); 
+		if (clientsockfd < 0) { 
+			perror("socket() failed\n"); 
 		}
-		for(p=servinfo; p!= NULL; p=p->ai_next){
-			if((clientsockfd = socket(p->ai_family, p->ai_socktype, p->ai_protocol)) == -1){
-				continue;
-			}
-			if(connect(clientsockfd, p->ai_addr, p->ai_addrlen) == -1){
-				close(clientsockfd);
-				continue;
-			}
-			break;
+		bzero(&client_addr, sizeof(client_addr)); 
+		client_addr.sin_family = AF_INET;
+		client_addr.sin_addr.s_addr = htonl(INADDR_ANY); 
+		client_addr.sin_port = htons(strToNum(listenerPort)); 
+		if (bind(clientsockfd, (struct sockaddr *) &client_addr, sizeof(struct sockaddr_in)) != 0) { 
+			perror("failed to bind port to client"); 
 		}
-		if(p == NULL){
-			//fail
-			printf("Error");
-			cse4589_print_and_log("[%s:ERROR]\n", cmd[0]);			
-			cse4589_print_and_log("[%s:END]\n", cmd[0]);
-			printf("Error");			
-			return;
-		}
-		freeaddrinfo(servinfo);
 		
+		bzero(&server_addr, sizeof(server_addr));
+		server_addr.sin_family = AF_INET;
+		inet_pton(AF_INET, cmd[1], &server_addr.sin_addr);
+		server_addr.sin_port = htons(server_port);
+
+		if(connect(clientsockfd, (struct sockaddr*)&server_addr, sizeof(server_addr)) < 0) {
+			cse4589_print_and_log("[%s:ERROR]\n", "LOGIN");
+			cse4589_print_and_log("[%s:END]\n", "LOGIN");
+			return; 
+		}
+				
 		printf("Socket conencted");
 		send(clientsockfd, listenerPort, sizeof listenerPort, 0); //sends port number to the server to fetch its buffered messages and list of logged-in clients 
 
@@ -598,15 +625,21 @@ void shellCmd(char **cmd, int count){
 	}else if(strcmp(cmd[0], "REFRESH") == 0){ //CHECKED - Has some part to be handled on the server side
 		if(isClient != 1 || !loggedin){
 			// on failure
+			printf("entered expection \n");
 			cse4589_print_and_log("[%s:ERROR]\n", cmd[0]);			
 			cse4589_print_and_log("[%s:END]\n", cmd[0]);			
 			return;
 		}
-
+		printf("sending refresh to server");
 		send(clientsockfd, "REFRESH", 7, 0);  //send msg to the server for refresh list of currenlty logged-in clients
+		printf("sending  completed");
+
 		char update[BUFLEN];
 		recv(clientsockfd, update, BUFLEN, 0);  //server sends list of currently logged in clients
+		printf("received from server \n");
+
 		unpack_store(update);   //unpack and store the details from the list in the data structure 
+		printf("list updated after refresh \n");
 		cse4589_print_and_log("[%s:SUCCESS]\n", cmd[0]);		
 		cse4589_print_and_log("[%s:END]\n", cmd[0]);
 		
@@ -751,7 +784,18 @@ void shellCmd(char **cmd, int count){
 		cse4589_print_and_log("[%s:END]\n", cmd[0]);
 		// server response not present, also error msg not handled 
 	// git push exit event
-	}/*else if(strcmp(cmd[0], "STATISTICS") == 0){
+	}else if(strcmp(cmd[0], "EXIT") == 0){
+         char buf[BUFLEN] = "EXIT";
+         send(clientsockfd, buf, BUFLEN, 0);
+         loggedin = 0;
+         close(clientsockfd);
+         FD_CLR(clientsockfd, &master);
+		 cse4589_print_and_log("[%s:SUCCESS]\n", cmd[0]);
+		 fflush(stdout);
+		 cse4589_print_and_log("[%s:END]\n", cmd[0]);
+		 fflush(stdout);
+         exit(0);
+		 /*else if(strcmp(cmd[0], "STATISTICS") == 0){
 		if(role != 1){
 			//fail
 		cse4589_print_and_log("[%s:ERROR]\n", cmd[0]);
@@ -778,7 +822,7 @@ void shellCmd(char **cmd, int count){
 		
 
 	}*/
-	
+	}
 	/*CHECKED STATISTICS COMMAND BY ALOK TRIPATHY*/
 	else if (strcmp(cmd[0],"STATISTICS") == 0)
 	{
@@ -1107,7 +1151,7 @@ void start(void){
 			if(FD_ISSET(i, &read_fds)){
 				// This section of code handles the terminal input and fetches the command and input arguments
 				if(i == STD_IN){
-					printf("i == STD_IN");
+					// printf("i == STD_IN");
 					char *cmd = (char *)malloc(sizeof(char)*CMD_SIZE);
 					memset(cmd, '\0', CMD_SIZE);
 					fgets(cmd, CMD_SIZE-1, stdin);
