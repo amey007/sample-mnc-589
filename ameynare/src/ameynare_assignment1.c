@@ -152,7 +152,7 @@ int bind_socket(const char *port_str)
 		perror("socket");
 		// exit(EXIT_FAILURE);
 	}
-	printf("Socket binded %d", sockfd);
+	printf("Socket connected %d", sockfd);
 	my_addr.sin_family = AF_INET;
 	my_addr.sin_port = htons(port);
 	my_addr.sin_addr.s_addr = INADDR_ANY; /* auto-fill with my IP */
