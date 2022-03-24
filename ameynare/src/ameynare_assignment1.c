@@ -242,7 +242,8 @@ int strToInt(const char* s){
 /*
 * Check if given addr and #port is valid
 */
-int isValidAddr(char *addr, char *port){
+//remove this afterwards
+/*int isValidAddr(char *addr, char *port){
 	//debug
 	//addr[strlen(addr)] = '\0';
 	//port[strlen(port)] = '\0';
@@ -266,14 +267,36 @@ int isValidAddr(char *addr, char *port){
 		}
 	}
 	return ret;
-}
+}*/
 
 /*
 * Pack & unpack the list info to send,
 * argm list shoulb be empty string "",
 * res store in an struct conns array
 */
-void packList(char *list){
+//remove this afterwards
+/*void packList(char *list){
+	for (int i=0; i<hostIndex; i++) {
+		if(hosts[i].status == login){
+			char tmp[PORTSTRLEN];
+			char status[5];
+			// int to string
+			sprintf(tmp, "%d", hosts[i].portNum);
+			sprintf(status, "%d", hosts[i].status);
+
+			strcat(list, hosts[i].hostname);
+			strcat(list, "---");
+			strcat(list, hosts[i].ip_addr);
+			strcat(list, "---");
+			strcat(list, tmp);
+			strcat(list, "---");
+			strcat(list, status);
+			strcat(list, "---");
+		}
+	}
+}*/
+
+void packClientInfo(char *list){
 	for (int i=0; i<hostIndex; i++) {
 		if(hosts[i].status == login){
 			char tmp[PORTSTRLEN];
@@ -293,6 +316,7 @@ void packList(char *list){
 		}
 	}
 }
+
 
 void unpack_store(char *list){
 	char *parts[20];
@@ -316,7 +340,8 @@ void unpack_store(char *list){
 
 }
 
-void unpackList(char *list){
+//remove this afterwards
+/*void unpackList(char *list){
 	char *parts[20];
 	int count = 0;
 	char *p;
@@ -336,7 +361,7 @@ void unpackList(char *list){
 		hosts[hostIndex++].status = tmp;
 	}
 
-}
+}*/
 
 /*
 * Check if certain sender is blocked by receiver
@@ -346,17 +371,17 @@ void unpackList(char *list){
 int isBlocked(int sender, char *receiver){
 	int ret = 0;
 
-	char senderaddr[INET_ADDRSTRLEN] = "";
+	char sender_ip[INET_ADDRSTRLEN] = "";
 	for(int i=0;i<hostIndex;i++){
 		if(hosts[i].hostsockfd == sender){
-			strcpy(senderaddr, hosts[i].ip_addr);
+			strcpy(sender_ip, hosts[i].ip_addr);
 			break;
 		}
 	}
 	for(int i =0; i<hostIndex; i++){
 		if(strcmp(hosts[i].ip_addr, receiver) == 0){
 			for(int j=0; j <hosts[i].blockindex;j++){
-				if(strcmp(hosts[i].blockedIPs[j]->ip_addr, senderaddr) == 0){
+				if(strcmp(hosts[i].blockedIPs[j]->ip_addr, sender_ip) == 0){
 					ret = 1;
 					break;
 				}
@@ -710,7 +735,8 @@ void shellCmds(char **cmd, int count){
 		cse4589_print_and_log("[%s:END]\n", cmd[0]);		
 		return;
 		}
-				
+		cse4589_print_and_log("[%s:SUCCESS]\n", cmd[0]);
+
 		for(int i=0;i<hostIndex;i++){
 			char tmp[20];
 			if(hosts[i].status == login){
@@ -722,11 +748,9 @@ void shellCmds(char **cmd, int count){
 			cse4589_print_and_log("%-5d%-35s%-8d%-8d%-8s\n", i+1, hosts[i].hostname, hosts[i].msg_sent, hosts[i].msg_received, tmp);
 			
 		}
-		cse4589_print_and_log("[%s:SUCCESS]\n", cmd[0]);
 		cse4589_print_and_log("[%s:END]\n", cmd[0]);
-		
-
-	}else if(strcmp(cmd[0], "BLOCKED") == 0){
+	}
+	else if(strcmp(cmd[0], "BLOCKED") == 0){
 		if(isServer != 1 || count != 2 || !is_valid_IP(cmd[1])){
 			//fail
 		cse4589_print_and_log("[%s:ERROR]\n", cmd[0]);		
@@ -759,36 +783,35 @@ void shellCmds(char **cmd, int count){
 		
 		}
 	}
-
 }
 
 /*
 * Response to client incoming msges
 */
-void response(char **arguments, int count, int caller){
+void server_response(char **arguments, int count, int calling_client){  
 	if(strcmp(arguments[0], "SEND") == 0){
 
 		char msg[BUFLEN] = "";
-		char senderaddr[INET_ADDRSTRLEN];
-		int sender;
+		char sender_ip[INET_ADDRSTRLEN];
+		int sender= 0;
 		for(sender=0;sender<hostIndex;sender++){
-			if(hosts[sender].hostsockfd == caller){
+			if(hosts[sender].hostsockfd == calling_client){
 				strcat(msg, hosts[sender].ip_addr);
 				strcat(msg, " ");
 				strcat(msg, arguments[2]);
 				strcat(msg, " ");
 
-				strcpy(senderaddr, hosts[sender].ip_addr);
+				strcpy(sender_ip, hosts[sender].ip_addr);
 				break;
 			}
 		}
 
-		int flag = 0;// check if the target already exited
+		int flag = 0; //indicates already exited
 		for(int i=0;i<hostIndex;i++){
 			if(strcmp(arguments[1], hosts[i].ip_addr) == 0){
 				flag = 1;
-				if(isBlocked(caller, arguments[1])){
-					send(caller, "BLOCKED", 7, 0);
+				if(isBlocked(calling_client, arguments[1])){
+					send(calling_client, "BLOCKED", 7, 0);
 					return;
 				}
 
@@ -796,45 +819,43 @@ void response(char **arguments, int count, int caller){
 					send(hosts[i].hostsockfd, msg, BUFLEN, 0);
 					hosts[i].msg_received++;
 					//triger event
-					cse4589_print_and_log("[%s:SUCCESS]\n" , "RELAYED");
-					
-					cse4589_print_and_log("msg from:%s, to:%s\n[msg]:%s\n", hosts[sender].ip_addr, hosts[i].ip_addr, arguments[2]);
-					
+					cse4589_print_and_log("[%s:SUCCESS]\n" , "RELAYED");					
+					cse4589_print_and_log("msg from:%s, to:%s\n[msg]:%s\n", hosts[sender].ip_addr, hosts[i].ip_addr, arguments[2]);					
 					cse4589_print_and_log("[%s:END]\n", "RELAYED");
 					
 
 				}else{
 					strcat(bufferedmsg, hosts[i].ip_addr);
 					strcat(bufferedmsg, "---");
-					strcat(bufferedmsg, senderaddr);
+					strcat(bufferedmsg, sender_ip);
 					strcat(bufferedmsg, "---");
 					strcat(bufferedmsg, arguments[2]);
 					strcat(bufferedmsg, "---");
 					hosts[i].msg_received++;
 				}
-
 				break;
 			}
 		}
 		if(flag==0){
-			send(caller, "FAIL", 4, 0);
+			send(calling_client, "FAIL", 4, 0);
 		}else{
-			send(caller, "SUCCESS", 7, 0);
+			send(calling_client, "SUCCESS", 7, 0);
 			hosts[sender].msg_sent++;
 		}
 
-	}else if(strcmp(arguments[0], "REFRESH") == 0){
-		char list[BUFLEN] = "";
-		packList(list);
-		send(caller, list, BUFLEN, 0);
-	}else if(strcmp(arguments[0], "BROADCAST") == 0){
-		char sender[INET_ADDRSTRLEN];
+	}
+	else if(strcmp(arguments[0], "REFRESH") == 0){
+		char clientList[BUFLEN] = "";
+		packClientInfo(clientList);
+		send(calling_client, clientList, BUFLEN, 0);
+	}
+	else if(strcmp(arguments[0], "BROADCAST") == 0){
+		char sender_ip[INET_ADDRSTRLEN];
 		char msg[BUFLEN];
 		for(int i=0;i<hostIndex;i++){
-			if(hosts[i].hostsockfd == caller){
+			if(hosts[i].hostsockfd == calling_client){
 				hosts[i].msg_sent++;
-				strcpy(sender, hosts[i].ip_addr);
-
+				strcpy(sender_ip, hosts[i].ip_addr);
 				strcpy(msg, hosts[i].ip_addr);
 				strcat(msg, " ");
 				strcat(msg, arguments[1]);
@@ -843,22 +864,19 @@ void response(char **arguments, int count, int caller){
 		}
 
 		for (int i=0; i<hostIndex; i++) {
-			if(!isBlocked(caller, hosts[i].ip_addr) && hosts[i].hostsockfd != caller){
+			if(!isBlocked(calling_client, hosts[i].ip_addr) && hosts[i].hostsockfd != calling_client){
 				if(hosts[i].status == login){
 					send(hosts[i].hostsockfd, msg, BUFLEN, 0);
 					hosts[i].msg_received++;
 					//triger event
-					cse4589_print_and_log("[%s:SUCCESS]\n" , "RELAYED");
-					
-					cse4589_print_and_log("msg from:%s, to:%s\n[msg]:%s\n", sender, "255.255.255.255", msg);
-					
+					cse4589_print_and_log("[%s:SUCCESS]\n" , "RELAYED");					
+					cse4589_print_and_log("msg from:%s, to:%s\n[msg]:%s\n", sender_ip, "255.255.255.255", msg);					
 					cse4589_print_and_log("[%s:END]\n", "RELAYED");
 					
 				}else{
-//                    strcat(bufferedmsg, "255.255.255.255"); mark
 					strcat(bufferedmsg, hosts[i].ip_addr);
 					strcat(bufferedmsg, "---");
-					strcat(bufferedmsg, sender);
+					strcat(bufferedmsg, sender_ip);
 					strcat(bufferedmsg, "---");
 					strcat(bufferedmsg, arguments[1]);
 					strcat(bufferedmsg, "---");
@@ -868,96 +886,96 @@ void response(char **arguments, int count, int caller){
 		}
 	}else if(strcmp(arguments[0], "BLOCK") == 0){
 
-		int target;
-		for(target=0;target<hostIndex;target++){
-			if(hosts[target].hostsockfd == caller) break;
+		int t;
+		for(t=0;t<hostIndex;t++){
+			if(hosts[t].hostsockfd == calling_client) break;
 		}
 
 		int found = 0;
-		int blocking;
-		for (blocking = 0; blocking< hostIndex; blocking++) {
-			if(strcmp(hosts[blocking].ip_addr, arguments[1])== 0) {
+		int b;
+		for (b = 0; b< hostIndex; b++) {
+			if(strcmp(hosts[b].ip_addr, arguments[1])== 0) {
 				found = 1;
 				break;
 			}
 		}
 
 		if(found == 0){
-			send(caller, "FAIL", 4, 0);
+			send(calling_client, "FAIL", 4, 0);
 			return;
 		}
 
-		if (hosts[target].blockindex == 0) {
-			//potential bug, if the blocking client already exited
-			hosts[target].blockedIPs[hosts[target].blockindex++] = &hosts[blocking];
+		if (hosts[t].blockindex == 0) {
+			//potential bug, if the b client already exited
+			hosts[t].blockedIPs[hosts[t].blockindex++] = &hosts[b];
 		}else{
-			for(int i=0;i<hosts[target].blockindex; i++){
-				if(strcmp(hosts[target].blockedIPs[i]->ip_addr, arguments[1]) == 0){
-					send(caller, "FAIL", 4, 0);
+			for(int i=0;i<hosts[t].blockindex; i++){
+				if(strcmp(hosts[t].blockedIPs[i]->ip_addr, arguments[1]) == 0){
+					send(calling_client, "FAIL", 4, 0);
 					return;
 				}
 			}
-			hosts[target].blockedIPs[hosts[target].blockindex++] = &hosts[blocking];
+			hosts[t].blockedIPs[hosts[t].blockindex++] = &hosts[b];
 
 			//sort the block list
-			if(hosts[target].blockindex > 1){
-				for(int i=0;i<hosts[target].blockindex-1;i++){
-					for (int j=i; j<hosts[target].blockindex; j++) {
-						if(hosts[target].blockedIPs[i]->portNum > hosts[target].blockedIPs[j]->portNum){
-							struct host *tmp = hosts[target].blockedIPs[i];
-							hosts[target].blockedIPs[i] = hosts[target].blockedIPs[j];
-							hosts[target].blockedIPs[j] = tmp;
+			if(hosts[t].blockindex > 1){
+				for(int i=0;i<hosts[t].blockindex-1;i++){
+					for (int j=i; j<hosts[t].blockindex; j++) {
+						if(hosts[t].blockedIPs[i]->portNum > hosts[t].blockedIPs[j]->portNum){
+							struct host *tmp = hosts[t].blockedIPs[i];
+							hosts[t].blockedIPs[i] = hosts[t].blockedIPs[j];
+							hosts[t].blockedIPs[j] = tmp;
 						}
 					}
 				}
 			}
 		}
-		send(caller, "SUCCESS", 7, 0);
+		send(calling_client, "SUCCESS", 7, 0);
 
 	}else if(strcmp(arguments[0], "UNBLOCK") == 0){
-		int target = 0;
-		for(target = 0; target<hostIndex;target++){
-			if(hosts[target].hostsockfd == caller) break;
+		int t = 0;
+		for(t = 0; t<hostIndex;t++){
+			if(hosts[t].hostsockfd == calling_client) break;
 		}
 
-		if(hosts[target].blockindex == 0){
-			send(caller, "FAIL", 4, 0);
+		if(hosts[t].blockindex == 0){
+			send(calling_client, "FAIL", 4, 0);
 			return;
 		}
 
 		int flag = 0;
-		for(int i=0;i<hosts[target].blockindex;i++){
-			if(strcmp(hosts[target].blockedIPs[i]->ip_addr, arguments[1]) == 0){
+		for(int i=0;i<hosts[t].blockindex;i++){
+			if(strcmp(hosts[t].blockedIPs[i]->ip_addr, arguments[1]) == 0){
 				if(i == 2){
-					hosts[target].blockindex--;
+					hosts[t].blockindex--;
 					flag = 1;
 					break;
 				}
-				for(int j=i+1;j<hosts[target].blockindex;j++){
-					hosts[target].blockedIPs[j-1] = hosts[target].blockedIPs[j];
+				for(int j=i+1;j<hosts[t].blockindex;j++){
+					hosts[t].blockedIPs[j-1] = hosts[t].blockedIPs[j];
 				}
 				flag = 1;
-				hosts[target].blockindex--;
+				hosts[t].blockindex--;
 				break;
 			}
 		}
 		if(flag == 0){
-			send(caller, "FAIL", 4, 0);
+			send(calling_client, "FAIL", 4, 0);
 			return;
 		}
-		send(caller, "SUCCESS", 7, 0);
+		send(calling_client, "SUCCESS", 7, 0);
 
 	}else if(strcmp(arguments[0], "EXIT") == 0){
-		int target;
-		for(target=0;target<hostIndex;target++){
-			if(hosts[target].hostsockfd == caller){
-				close(hosts[target].hostsockfd);
-				FD_CLR(hosts[target].hostsockfd, &master_list);
-				if(target == 3){
+		int t;
+		for(t=0;t<hostIndex;t++){
+			if(hosts[t].hostsockfd == calling_client){
+				close(hosts[t].hostsockfd);
+				FD_CLR(hosts[t].hostsockfd, &master_list);
+				if(t == 3){
 					hostIndex--;
 					break;
 				}
-				for(int j=target+1;j<hostIndex;j++){
+				for(int j=t+1;j<hostIndex;j++){
 					hosts[j-1] = hosts[j];
 				}
 				hostIndex--;
@@ -967,7 +985,7 @@ void response(char **arguments, int count, int caller){
 		}
 	}else if(strcmp(arguments[0], "LOGOUT") == 0){
 		for(int i=0;i<hostIndex;i++){
-			if(hosts[i].hostsockfd == caller){
+			if(hosts[i].hostsockfd == calling_client){
 				close(hosts[i].hostsockfd);
 				FD_CLR(hosts[i].hostsockfd, &master_list);
 				hosts[i].status = logout;
@@ -1019,13 +1037,13 @@ void start(void){
 					}
 
 					shellCmds(argm, count);
+
 				}else if(i == socketfd && isServer == 1){
 					// process new hosts, use a data structure to store info
 					struct sockaddr_storage remoteaddr;
 					socklen_t len = sizeof(remoteaddr);
 					int newfd = accept(socketfd, (struct sockaddr *)&remoteaddr, &len);
 					if(newfd == -1){
-					//  flag = -1;
 						continue;
 					}
 					FD_SET(newfd, &master_list);
@@ -1049,17 +1067,17 @@ void start(void){
 						}
 					}
 					if(!exist){
-						struct host newConnection;
-						newConnection.hostsockfd = newfd;
-						strcpy(newConnection.ip_addr, tmp);
-						//newConnection.portNum = ((struct sockaddr_in *)&remoteaddr)->sin_port;
-						newConnection.portNum = strToInt(clientPort);
-						strcpy(newConnection.hostname, he->h_name);
-						newConnection.msg_sent = 0;
-						newConnection.msg_received = 0;
-						newConnection.status = login;
-						newConnection.blockindex = 0;
-						hosts[hostIndex++] = newConnection;
+						struct host newhost;
+						newhost.hostsockfd = newfd;
+						strcpy(newhost.ip_addr, tmp);
+						//newhost.portNum = ((struct sockaddr_in *)&remoteaddr)->sin_port;
+						newhost.portNum = strToInt(clientPort);
+						strcpy(newhost.hostname, he->h_name);
+						newhost.msg_sent = 0;
+						newhost.msg_received = 0;
+						newhost.status = login;
+						newhost.blockindex = 0;
+						hosts[hostIndex++] = newhost;
 					}
 					// sort the array
 					if(hostIndex > 1){
@@ -1089,125 +1107,116 @@ void start(void){
 						p = strtok(NULL, "---");
 					}
 
-					char newBufferedmsg[BUFLEN]="";
-					char sendingmsg[BUFLEN]="";
+					char newBufmsg[BUFLEN]="";
+					char msgtosend[BUFLEN]="";
 
 					int flag = 0;
 					for (int i=0; i<count; ) {
 						if (strcmp(tmp, bufmsg[i]) == 0) {
 							if(flag == 0){
-								strcat(sendingmsg, "BROADCAST,");
-								strcat(sendingmsg, "---");
+								strcat(msgtosend, "BROADCAST,");
+								strcat(msgtosend, "---");
 								flag = 1;
 							}
-							strcat(sendingmsg, bufmsg[i+1]);
-							strcat(sendingmsg, "---");
-							strcat(sendingmsg, bufmsg[i+2]);
-							strcat(sendingmsg, "---");
-							cse4589_print_and_log("[%s:SUCCESS]\n", "RELAYED");
-							
-							cse4589_print_and_log("msg from:%s, to:%s\n[msg]:%s\n", bufmsg[i+1], bufmsg[i], bufmsg[i+2]);
-							
+							strcat(msgtosend, bufmsg[i+1]);
+							strcat(msgtosend, "---");
+							strcat(msgtosend, bufmsg[i+2]);
+							strcat(msgtosend, "---");
+							cse4589_print_and_log("[%s:SUCCESS]\n", "RELAYED");							
+							cse4589_print_and_log("msg from:%s, to:%s\n[msg]:%s\n", bufmsg[i+1], bufmsg[i], bufmsg[i+2]);							
 							cse4589_print_and_log("[%s:END]\n", "RELAYED");
 							
 							i+=3;
 						} else if(strcmp(bufmsg[i], "255.255.255.255") == 0){
 							if(flag == 0){
-								strcat(sendingmsg, "BROADCAST,");
-								strcat(sendingmsg, "---");
+								strcat(msgtosend, "BROADCAST,");
+								strcat(msgtosend, "---");
 								flag = 1;
 							}
-							strcat(newBufferedmsg, "255.255.255.255");
-							strcat(newBufferedmsg, "---");
-							strcat(newBufferedmsg, bufmsg[i+1]);
-							strcat(newBufferedmsg, "---");
-							strcat(newBufferedmsg, bufmsg[i+2]);
-							strcat(newBufferedmsg, "---");
+							strcat(newBufmsg, "255.255.255.255");
+							strcat(newBufmsg, "---");
+							strcat(newBufmsg, bufmsg[i+1]);
+							strcat(newBufmsg, "---");
+							strcat(newBufmsg, bufmsg[i+2]);
+							strcat(newBufmsg, "---");
 
-							strcat(sendingmsg, bufmsg[i+1]);
-							strcat(sendingmsg, "---");
-							strcat(sendingmsg, bufmsg[i+2]);
-							strcat(sendingmsg, "---");
-							cse4589_print_and_log("[%s:SUCCESS]\n", "RELAYED");
-							
-							cse4589_print_and_log("msg from:%s, to:%s\n[msg]:%s\n", bufmsg[i+1], bufmsg[i], bufmsg[i+2]);
-							
+							strcat(msgtosend, bufmsg[i+1]);
+							strcat(msgtosend, "---");
+							strcat(msgtosend, bufmsg[i+2]);
+							strcat(msgtosend, "---");
+							cse4589_print_and_log("[%s:SUCCESS]\n", "RELAYED");							
+							cse4589_print_and_log("msg from:%s, to:%s\n[msg]:%s\n", bufmsg[i+1], bufmsg[i], bufmsg[i+2]);							
 							cse4589_print_and_log("[%s:END]\n", "RELAYED");
 							
 							i+=3;
 						} else{
-							strcat(newBufferedmsg, bufmsg[i++]);
-							strcat(newBufferedmsg, "---");
-							strcat(newBufferedmsg, bufmsg[i++]);
-							strcat(newBufferedmsg, "---");
-							strcat(newBufferedmsg, bufmsg[i++]);
-							strcat(newBufferedmsg, "---");
+							strcat(newBufmsg, bufmsg[i++]);
+							strcat(newBufmsg, "---");
+							strcat(newBufmsg, bufmsg[i++]);
+							strcat(newBufmsg, "---");
+							strcat(newBufmsg, bufmsg[i++]);
+							strcat(newBufmsg, "---");
 						}
 					}
-					strcpy(bufferedmsg, newBufferedmsg);
+					strcpy(bufferedmsg, newBufmsg);
 			
-					send(newfd, sendingmsg, BUFLEN, 0);
+					send(newfd, msgtosend, BUFLEN, 0);
 
 				}else if(isServer == 0 && i == clientsockfd){
 					char buf[BUFLEN];
-					int nbytes = recv(i, buf, sizeof buf, 0);
+					int databytes = recv(i, buf, sizeof buf, 0);
 					
 					char flag[10]="";
-				if(nbytes > 1){
-					strncpy(flag, buf, 10);
+
+					if(databytes > 1){
+						trncpy(flag, buf, 10);
 					}
 
 					if(strcmp(flag, "BROADCAST,") == 0){
-					char *tmp;
-					int count = 0;
-					char *msgset[BUFLEN];
-					tmp = strtok(buf, "---");
-					while (tmp != NULL) {
-						msgset[count++] = tmp;
-						tmp = strtok(NULL, "---");
-					}
-				
-
-					for(int i=1;i<count;){
-						cse4589_print_and_log("[%s:SUCCESS]\n", "RECEIVED");
-						
-						cse4589_print_and_log("msg from:%s\n[msg]:%s\n", msgset[i], msgset[i+1]);
-						
-						cse4589_print_and_log("[%s:END]\n", "RECEIVED");
-						
-						i+=2;
-					}
-
-
-				}else{
 						char *tmp;
 						int count = 0;
 						char *msgset[BUFLEN];
-						tmp = strtok(buf, " ");
+						tmp = strtok(buf, "---");
 						while (tmp != NULL) {
 							msgset[count++] = tmp;
-							tmp = strtok(NULL, " ");
+							tmp = strtok(NULL, "---");
+						}			
+
+						for(int i=1;i<count;){
+							cse4589_print_and_log("[%s:SUCCESS]\n", "RECEIVED");							
+							cse4589_print_and_log("msg from:%s\n[msg]:%s\n", msgset[i], msgset[i+1]);							
+							cse4589_print_and_log("[%s:END]\n", "RECEIVED");
+							
+							i+=2;
 						}
 
-						char recvmsg[MSGLEN] = "";
-						for(int n = 1; n< count; n++){
-						strcat(recvmsg, msgset[n]);
-						if(n<count-1) strcat(recvmsg, " ");
-						}
+					}else{
+							char *tmp;
+							int count = 0;
+							char *msgset[BUFLEN];
+							tmp = strtok(buf, " ");
+							while (tmp != NULL) {
+								msgset[count++] = tmp;
+								tmp = strtok(NULL, " ");
+							}
 
-						cse4589_print_and_log("[%s:SUCCESS]\n", "RECEIVED");
-						
-						cse4589_print_and_log("msg from:%s\n[msg]:%s\n", msgset[0], recvmsg);
-						
-						cse4589_print_and_log("[%s:END]\n", "RECEIVED");
-						
+							char recvmsg[MSGLEN] = "";
+							for(int n = 1; n< count; n++){
+								strcat(recvmsg, msgset[n]);
+								if(n<count-1) strcat(recvmsg, " ");
+							}
+
+							cse4589_print_and_log("[%s:SUCCESS]\n", "RECEIVED");						
+							cse4589_print_and_log("msg from:%s\n[msg]:%s\n", msgset[0], recvmsg);						
+							cse4589_print_and_log("[%s:END]\n", "RECEIVED");
+							
 						}
-					// triger event cse4589
-					// recv from server to receive msg from others
+						// triger event cse4589
+						// recv from server to receive msg from others
 				}else{
 					char buf[BUFLEN];
-					ssize_t nbytes = recv(i, buf, sizeof buf, 0);
-					buf[nbytes] = '\0';
+					ssize_t databytes = recv(i, buf, sizeof buf, 0);
+					buf[databytes] = '\0';
 
 					int count = 0;
 					char *p;
@@ -1221,17 +1230,17 @@ void start(void){
 					char msg[MSGLEN] = "";
 					if(strcmp(arguments[0], "SEND") == 0){
 						for(int i=2; i<count; i++){
-						strcat(msg, arguments[i]);
-						if(i < count-1) strcat(msg, " ");
+							strcat(msg, arguments[i]);
+							if(i < count-1) strcat(msg, " ");
 						}
 						count = 3;
 						arguments[count-1] = msg;
 					}
 
 					if(strcmp(arguments[0], "BROADCAST") == 0){
-					for(int i=1; i<count; i++){
-						strcat(msg, arguments[i]);
-						if(i < count-1) strcat(msg, " ");
+						for(int i=1; i<count; i++){
+							strcat(msg, arguments[i]);
+							if(i < count-1) strcat(msg, " ");
 						}
 						count = 2;
 						arguments[count-1] = msg;
@@ -1245,7 +1254,7 @@ void start(void){
 					//}
 					//printf("\n");
 
-				response(arguments, count, i);
+					server_response(arguments,count, i); // second argument was count
 					// recv from connected socket, also need to consider argument,send, refresh or block.
 
 				}
