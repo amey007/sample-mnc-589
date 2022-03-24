@@ -20,74 +20,134 @@
  *
  * This contains the main function. Add further description here....
  */
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-// For uppercase (toupper function)
-// May not be needed
-#include <ctype.h>
-#include <unistd.h>
-//#include <errno.h>
-#include <sys/types.h>
 #include <sys/socket.h>
-//#include <netinet/in.h>
+#include <sys/types.h>
 #include <netdb.h>
+#include <unistd.h>
 #include <arpa/inet.h>
-//#include <sys/wait.h>
-//#include <signal.h>
 #include <sys/select.h>
+#include <ctype.h>
 
 #include "../include/global.h"
 #include "../include/logger.h"
-//#include "../src/logger.c"
 
-#define CMD_SIZE 100
+#define HOSTNAMESTRLEN 60
+#define PORTSTRLEN 10
+#define CMD_LEN 128
 #define BUFLEN 1024
 #define MSGLEN 256
 #define BACKLOG 4
 #define STD_IN 0
-#define HOSTNAMESTRLEN 50
-#define PORTSTRLEN 10
-#define logged_in 1
-#define logged_out 0
+#define login 1
+#define logout 0
 
+int socketfd;  //localsockfd
+int clientsockfd;
+int isServer = 0; // denote server - 1, or client - 0
+int hostIndex = 0;
+int logedin = 0; // a flag to indicate log in, avoid multible log in
+char lis_port[PORTSTRLEN];
 
-struct connection {
+struct host {
 	char hostname[HOSTNAMESTRLEN];
-	char remote_addr[INET_ADDRSTRLEN];
+	char ip_addr[INET_ADDRSTRLEN]; //remote_addr
 	int portNum;
 	int msg_received;
 	int msg_sent;
 	int status;
 	int blockindex;
-
-	struct connection *blockedIPs[3];
-
-	int connsockfd;
+	struct host *blockedIPs[3];
+	int hostsockfd; //connsockfd
 };
 
+struct host hosts[4];
 char bufferedmsg[BUFLEN] = "";
 
-int isClient = 1;   //// This a variable is used as a flag to indicate client or server. 0 -> Server and 1 -> Client
-int localsockfd;
-int clientsockfd;
-//int flag = 0;
-char listenerPort[PORTSTRLEN]; 
-struct connection connections[4];
-int connIndex = 0;
-int loggedin = 0; // a flag to indicate log in, avoid multiple log in
-
-fd_set master, read_fds;
+fd_set master_list, watch_list;
 int maxfd;
 
-/*
-*Function to get local IP address,
-*returns 0 on success and -1 on fail.
-*Pass in a char * to store the result.
-*/
 
+/*int get_IP(char *res){
+	int sockfd = 0;
+	struct addrinfo hints, *servinfo, *p;
+	struct sockaddr myip;
+	socklen_t len = sizeof(myip);
 
-/*-----------------------HELPER FUNCTIONS-----------------------*/
+	memset(&hints, 0, sizeof(hints));
+	hints.ai_family = AF_UNSPEC;
+	hints.ai_socktype = SOCK_DGRAM;
+
+	if(getaddrinfo("8.8.8.8", "53", &hints, &servinfo) != 0){
+		return -1;
+	}
+
+	for(p=servinfo; p!= NULL; p=p->ai_next){
+		if((sockfd = socket(p->ai_family, p->ai_socktype, p->ai_protocol)) == -1){
+			continue;
+		}
+
+		if(connect(sockfd, p->ai_addr, p->ai_addrlen) == -1){
+			close(sockfd);
+			continue;
+		}
+		break;
+	}
+
+	if(p == NULL){
+		return -1;
+	}
+	freeaddrinfo(servinfo);
+
+	getsockname(sockfd, &myip, &len);
+	inet_ntop(AF_INET, &(((struct sockaddr_in *)&myip)->sin_addr), res, INET6_ADDRSTRLEN);
+	close(sockfd);
+
+	return 0;
+}*/
+
+void get_IP()
+{	
+	// This functions connects to google to fetch the IP
+    const char* google_dns = "8.8.8.8";
+    int dns_port = 53;
+    
+    struct sockaddr_in saddr;     
+    int sockfd = socket ( AF_INET, SOCK_DGRAM, 0);  //Creating a socket
+     
+    if(sockfd < 0) { perror("Socket error"); }
+     
+    memset( &saddr, 0, sizeof(saddr) );
+    saddr.sin_family = AF_INET;
+    saddr.sin_addr.s_addr = inet_addr(google_dns);
+    saddr.sin_port = htons( dns_port );
+ 
+    connect( sockfd , (const struct sockaddr*) &saddr, sizeof(saddr) );  //
+     
+    bzero(&saddr, sizeof(saddr));
+    socklen_t len = sizeof(saddr);
+    getsockname(sockfd, (struct sockaddr*) &saddr, &len);  //retrieves the locally-bound name of the specified socket, store this address in the sockaddr structure
+         
+    char ip_addr[16];
+    const char* p = inet_ntop(AF_INET, &saddr.sin_addr, ip_addr, sizeof(ip_addr));  // convert a numeric address into a dotted format IP address
+         
+    if(p != NULL)
+    {
+    	cse4589_print_and_log("[IP:SUCCESS]\n");
+        cse4589_print_and_log("IP:%s\n",ip_addr);
+		cse4589_print_and_log("[IP:END]\n");
+    }
+    else
+    {
+    	cse4589_print_and_log("[IP:ERROR]\n");
+		cse4589_print_and_log("[IP:END]\n");
+    }
+    close(sockfd);  //closes the socket
+}
+
 int is_valid_port(const char *input) {
 	int i = 0;
 	if(input[i] == '-') { return 0; }
@@ -129,227 +189,10 @@ int is_valid_IP(const char *ip) {
 	return 1;
 }
 
-int strToNum(const char* s){
-	int ret = 0;
-	for (int i=0;i<strlen(s);i++){
-		int t = s[i]-'0';
-		if  (t<0 || t >9) return -1;
-		ret = ret*10+t;
-	}
-	return ret;
-}
-
-int bind_socket(const char *port_str)
-{	
-	if(!is_valid_port(port_str)){
-		perror("Invalid Port Number entered!");
-	}
-	int port = strToNum(port_str);  //Converts the port from char to int
-	struct sockaddr_in my_addr;
-	int sockfd = socket(AF_INET,SOCK_STREAM,0);
-	
-	if(sockfd == -1)
-	{
-		perror("socket");
-		// exit(EXIT_FAILURE);
-	}
-	printf("Socket connected %d", sockfd);
-	my_addr.sin_family = AF_INET;
-	my_addr.sin_port = htons(port);
-	my_addr.sin_addr.s_addr = INADDR_ANY; /* auto-fill with my IP */
-	bzero(&(my_addr.sin_zero), 8);		  
-	
-	int bindfd =  bind(sockfd,(struct sockaddr *)&my_addr,sizeof(struct sockaddr));
-	if(bindfd == -1)
-	{
-		perror("bind");
-		// exit(EXIT_FAILURE);
-	}
-	printf("Socket binded %d", bindfd);
-
-	int localsockfd = listen(bindfd,BACKLOG);
-	if(localsockfd ==-1)
-	{
-		perror("listen");
-		printf("Socket Listening started %d", localsockfd);
-	}
-	
-	return localsockfd;
-}
-
-// int connect_host(char *server_ip, char *server_port)
-// {	
-//     struct addrinfo hints, *servinfo, *p;
-// 	memset(&hints, 0, sizeof hints);
-// 	hints.ai_family = AF_INET;
-// 	hints.ai_socktype = SOCK_STREAM;
-
-// 	if(getaddrinfo(server_ip, server_port, &hints, &servinfo) != 0){
-// 		//fails to get the addr info
-// 		cse4589_print_and_log("[%s:ERROR]\n", cmd[0]);			
-// 		cse4589_print_and_log("[%s:END]\n", cmd[0]);			
-// 		return;
-// 	}
-// 	for(p=servinfo; p!= NULL; p=p->ai_next){
-// 		if((clientsockfd = socket(p->ai_family, p->ai_socktype, p->ai_protocol)) == -1){
-// 			continue;
-// 		}
-// 		if(connect(clientsockfd, p->ai_addr, p->ai_addrlen) == -1){
-// 			close(clientsockfd);
-// 			continue;
-// 		}
-// 		break;
-// 	}
-// 	if(p == NULL){
-// 		//fail
-// 		cse4589_print_and_log("[%s:ERROR]\n", cmd[0]);			
-// 		cse4589_print_and_log("[%s:END]\n", cmd[0]);			
-// 		return;
-// 	}
-// 	freeaddrinfo(servinfo);
-//     return clientsockfd;
-// }
-
-void get_IP()
-{	
-	// This functions connects to google to fetch the IP
-    const char* google_dns = "8.8.8.8";
-    int dns_port = 53;
-    
-    struct sockaddr_in saddr;     
-    int sockfd = socket ( AF_INET, SOCK_DGRAM, 0);  //Creating a socket
-     
-    if(sockfd < 0) { perror("Socket error"); }
-     
-    memset( &saddr, 0, sizeof(saddr) );
-    saddr.sin_family = AF_INET;
-    saddr.sin_addr.s_addr = inet_addr(google_dns);
-    saddr.sin_port = htons( dns_port );
- 
-    connect( sockfd , (const struct sockaddr*) &saddr, sizeof(saddr) );  //
-     
-    bzero(&saddr, sizeof(saddr));
-    socklen_t len = sizeof(saddr);
-    getsockname(sockfd, (struct sockaddr*) &saddr, &len);  //retrieves the locally-bound name of the specified socket, store this address in the sockaddr structure
-         
-    char ip_addr[16];
-    const char* p = inet_ntop(AF_INET, &saddr.sin_addr, ip_addr, sizeof(ip_addr));  // convert a numeric address into a dotted format IP address
-         
-    if(p != NULL)
-    {
-    	cse4589_print_and_log("[IP:SUCCESS]\n");
-        cse4589_print_and_log("IP:%s\n",ip_addr);
-		cse4589_print_and_log("[IP:END]\n");
-    }
-    else
-    {
-    	cse4589_print_and_log("[IP:ERROR]\n");
-		cse4589_print_and_log("[IP:END]\n");
-    }
-    close(sockfd);  //closes the socket
-}
-
-
-// check if receiver of the msg is in local list of the client
-int in_Cur_LogClients(char *rcv_client_ip){
-	int present = 0;
-	for (int i=0; i<connIndex; i++) {
-		if (strcmp(rcv_client_ip, connections[i].remote_addr) == 0) {
-			present = 1;
-			break;
-		}
-	}
-	return present;
-}
-
-// target_ip is client to check if blocked in for client having recvsockfd
-int alreadyBlocked(char *target_ip, int recvsockfd){
-	int result = 0;
-	for(int i =0; i<connIndex; i++){
-		if(connections[i].connsockfd == recvsockfd){
-			for(int j=0; j <connections[i].blockindex;j++){
-				if(strcmp(connections[i].blockedIPs[j]->remote_addr, target_ip) == 0){
-					result = 1;
-					break;
-				}
-			}
-			break;
-		}
-	}	
-}
-
-// check if receiver has blocked the sender 
-int isBlocked(int sender, char *receiver){
-	int ret = 0;
-
-	char senderaddr[INET_ADDRSTRLEN] = "";
-	for(int i=0;i<connIndex;i++){
-		if(connections[i].connsockfd == sender){
-			strcpy(senderaddr, connections[i].remote_addr);
-			break;
-		}
-	}
-	for(int i =0; i<connIndex; i++){
-		if(strcmp(connections[i].remote_addr, receiver) == 0){
-			for(int j=0; j <connections[i].blockindex;j++){
-				if(strcmp(connections[i].blockedIPs[j]->remote_addr, senderaddr) == 0){
-					ret = 1;
-					break;
-				}
-			}
-			break;
-		}
-	}
-
-	return ret;
-}
-
-
-// Need to remove this function, alternate function implemented get_IP
-int get_localIP(char *res){
-	int sockfd = 0;
-	struct addrinfo hints, *servinfo, *p;
-	struct sockaddr myip;
-	socklen_t len = sizeof(myip);
-
-	memset(&hints, 0, sizeof(hints));
-	hints.ai_family = AF_UNSPEC;
-	hints.ai_socktype = SOCK_DGRAM;
-
-	if(getaddrinfo("8.8.8.8", "53", &hints, &servinfo) != 0){
-		return -1;
-	}
-
-	for(p=servinfo; p!= NULL; p=p->ai_next){
-		if((sockfd = socket(p->ai_family, p->ai_socktype, p->ai_protocol)) == -1){
-			continue;
-		}
-
-		if(connect(sockfd, p->ai_addr, p->ai_addrlen) == -1){
-			close(sockfd);
-			continue;
-		}
-		break;
-	}
-
-	if(p == NULL){
-		return -1;
-	}
-	freeaddrinfo(servinfo);
-
-	getsockname(sockfd, &myip, &len);
-	inet_ntop(AF_INET, &(((struct sockaddr_in *)&myip)->sin_addr), res, INET6_ADDRSTRLEN);
-	close(sockfd);
-
-	return 0;
-}
-
 /*
 * Preparation, create socket and listen for connection.
 * Success return 0, otherwise -1
 */
-
-// Need to remove this function, separate functions implemented for server and client
 int prep(const char *port){
 	struct addrinfo hints, *servinfo, *p;
 
@@ -363,12 +206,12 @@ int prep(const char *port){
 	}
 
 	for(p = servinfo; p != NULL; p=p->ai_next){
-		if((localsockfd = socket(p->ai_family, p->ai_socktype, p->ai_protocol)) == -1){
+		if((socketfd = socket(p->ai_family, p->ai_socktype, p->ai_protocol)) == -1){
 			continue;
 		}
 
-		if(bind(localsockfd, p->ai_addr, p->ai_addrlen) == -1){
-			close(localsockfd);
+		if(bind(socketfd, p->ai_addr, p->ai_addrlen) == -1){
+			close(socketfd);
 			continue;
 		}
 		break;
@@ -377,7 +220,7 @@ int prep(const char *port){
 	if(p == NULL) return -1;
 	freeaddrinfo(servinfo);
 
-	if(listen(localsockfd, BACKLOG) == -1){
+	if(listen(socketfd, BACKLOG) == -1){
 		return -1;
 	}
 
@@ -385,17 +228,26 @@ int prep(const char *port){
 }
 
 
+int strToInt(const char* s){
+	int ret = 0;
+	for (int i=0;i<strlen(s);i++){
+		int t = s[i]-'0';
+		if  (t<0 || t >9) return -1;
+		ret = ret*10+t;
+	}
+	return ret;
+}
+
 
 /*
 * Check if given addr and #port is valid
 */
-// Need to remove this function, separate functions implemented for server and client
 int isValidAddr(char *addr, char *port){
 	//debug
 	//addr[strlen(addr)] = '\0';
 	//port[strlen(port)] = '\0';
 	int ret = 1;
-	for(int i=0; i<CMD_SIZE;i++){
+	for(int i=0; i<CMD_LEN;i++){
 		if(*(addr+i) == '\0') break;
 		if(*(addr+i) == '.') continue;
 		int t = *(addr+i) - '0';
@@ -405,7 +257,7 @@ int isValidAddr(char *addr, char *port){
 		}
 	}
 
-	for(int i=0; i<CMD_SIZE;i++){
+	for(int i=0; i<CMD_LEN;i++){
 		if(*(port+i) == '\0') break;
 		int t = *(port+i) - '0';
 		if(t<0 || t>9) {
@@ -421,19 +273,18 @@ int isValidAddr(char *addr, char *port){
 * argm list shoulb be empty string "",
 * res store in an struct conns array
 */
-void packClientInfo(char *list){
-	for (int i=0; i<connIndex; i++) {
-		if(connections[i].status == logged_in){
+void packList(char *list){
+	for (int i=0; i<hostIndex; i++) {
+		if(hosts[i].status == login){
 			char tmp[PORTSTRLEN];
 			char status[5];
-			
-			sprintf(tmp, "%d", connections[i].portNum);   // stores the formatted output to the char buffer specified
-			sprintf(status, "%d", connections[i].status);
+			// int to string
+			sprintf(tmp, "%d", hosts[i].portNum);
+			sprintf(status, "%d", hosts[i].status);
 
-			// Packing data in list
-			strcat(list, connections[i].hostname);   
+			strcat(list, hosts[i].hostname);
 			strcat(list, "---");
-			strcat(list, connections[i].remote_addr);
+			strcat(list, hosts[i].ip_addr);
 			strcat(list, "---");
 			strcat(list, tmp);
 			strcat(list, "---");
@@ -443,7 +294,6 @@ void packClientInfo(char *list){
 	}
 }
 
-// functions unpacks and stores locally the list of client info from the server
 void unpack_store(char *list){
 	char *parts[20];
 	int count = 0;
@@ -454,14 +304,36 @@ void unpack_store(char *list){
 		p = strtok(NULL, "---");
 	}
 
-	if (connIndex != 0) connIndex = 0;  // starting from the first storage point
+	if (hostIndex != 0) hostIndex = 0;
 	for(int i=0;i<count;){
-		strcpy(connections[connIndex].hostname, parts[i++]);
-		strcpy(connections[connIndex].remote_addr, parts[i++]);
-		int tmp = strToNum(parts[i++]);
-		connections[connIndex].portNum = tmp;
-		tmp = strToNum(parts[i++]);
-		connections[connIndex++].status = tmp;
+		strcpy(hosts[hostIndex].hostname, parts[i++]);
+		strcpy(hosts[hostIndex].ip_addr, parts[i++]);
+		int tmp = strToInt(parts[i++]);
+		hosts[hostIndex].portNum = tmp;
+		tmp = strToInt(parts[i++]);
+		hosts[hostIndex++].status = tmp;
+	}
+
+}
+
+void unpackList(char *list){
+	char *parts[20];
+	int count = 0;
+	char *p;
+	p = strtok(list, "---");
+	while (p != NULL) {
+		parts[count++] = p;
+		p = strtok(NULL, "---");
+	}
+
+	if (hostIndex != 0) hostIndex = 0;
+	for(int i=0;i<count;){
+		strcpy(hosts[hostIndex].hostname, parts[i++]);
+		strcpy(hosts[hostIndex].ip_addr, parts[i++]);
+		int tmp = strToInt(parts[i++]);
+		hosts[hostIndex].portNum = tmp;
+		tmp = strToInt(parts[i++]);
+		hosts[hostIndex++].status = tmp;
 	}
 
 }
@@ -471,93 +343,86 @@ void unpack_store(char *list){
 * return 0 if not blocked
 */
 
+int isBlocked(int sender, char *receiver){
+	int ret = 0;
+
+	char senderaddr[INET_ADDRSTRLEN] = "";
+	for(int i=0;i<hostIndex;i++){
+		if(hosts[i].hostsockfd == sender){
+			strcpy(senderaddr, hosts[i].ip_addr);
+			break;
+		}
+	}
+	for(int i =0; i<hostIndex; i++){
+		if(strcmp(hosts[i].ip_addr, receiver) == 0){
+			for(int j=0; j <hosts[i].blockindex;j++){
+				if(strcmp(hosts[i].blockedIPs[j]->ip_addr, senderaddr) == 0){
+					ret = 1;
+					break;
+				}
+			}
+			break;
+		}
+	}
+
+	return ret;
+}
 
 
-/*
-* executes input command
-*/
-void shellCmd(char **cmd, int count){
-	
-	if (strcmp(cmd[0], "AUTHOR") == 0) {
+void shellCmds(char **cmd, int count){
+
+	if (strcmp(cmd[0], "AUTHOR") == 0) 
+	{
 		cse4589_print_and_log("[%s:SUCCESS]\n", cmd[0]);
 		char your_ubit_name[9] = "ameynare";		
 		cse4589_print_and_log("I, %s, have read and understood the course academic integrity policy.\n", your_ubit_name);		
-		cse4589_print_and_log("[%s:END]\n", cmd[0]);
-		
-	}else if(strcmp(cmd[0], "IP") == 0){
-		get_IP();    //print and log statements are handled in the function get_IP()
-		
-	}else if(strcmp(cmd[0], "PORT") == 0){
+		cse4589_print_and_log("[%s:END]\n", cmd[0]);		
+	}
+	else if(strcmp(cmd[0], "IP") == 0)
+	{
+		get_IP();    //print and log statements are handled in the function get_IP()		
+	}
+	else if(strcmp(cmd[0], "PORT") == 0)
+	{
 		cse4589_print_and_log("[%s:SUCCESS]\n", cmd[0]);		
-		cse4589_print_and_log("PORT:%d\n", strToNum(listenerPort));		
-		cse4589_print_and_log("[%s:END]\n", cmd[0]);
-		
-	}else if(strcmp(cmd[0], "LIST") == 0){
-		if (isClient && !logged_in){
+		cse4589_print_and_log("PORT:%d\n", strToInt(lis_port));		
+		cse4589_print_and_log("[%s:END]\n", cmd[0]);		
+	}
+	else if(strcmp(cmd[0], "LIST") == 0)
+	{
+		if (isServer && !logedin)
+		{
 			// on failure
 			cse4589_print_and_log("[%s:ERROR]\n", cmd[0]);			
 			cse4589_print_and_log("[%s:END]\n", cmd[0]);			
 			return;
-		}else{
+		}else
+		{
 			int count = 1;
 			cse4589_print_and_log("[%s:SUCCESS]\n", cmd[0]);
 			//loop to print the client details from the stored struct data structure		
-			for(int i=0;i<connIndex;i++){
-				if(connections[i].status == logged_in){
-					cse4589_print_and_log("%-5d%-35s%-20s%-8d\n", count++, connections[i].hostname, connections[i].remote_addr, connections[i].portNum);				
+			for(int i=0;i<hostIndex;i++){
+				if(hosts[i].status == login){
+					cse4589_print_and_log("%-5d%-35s%-20s%-8d\n", count++, hosts[i].hostname, hosts[i].ip_addr, hosts[i].portNum);				
 				}
 			}
 			cse4589_print_and_log("[%s:END]\n", cmd[0]);
 		}
-		
-		
-	}else if(strcmp(cmd[0], "LOGIN") == 0){ //CHECK - Has some part to be handled on the server side
-		printf("Entered LOGIN loop");
-		printf("%d\n",is_valid_IP(cmd[1]));
-		printf("%d\n",is_valid_IP(cmd[1]));
-		printf("%d\n",loggedin);
-		printf("%d\n",isClient);
-		printf("%d\n",count);
-		if(isClient != 1 || count != 3 || !is_valid_IP(cmd[1]) || !is_valid_port(cmd[2]) || loggedin){
+	}
+	else if(strcmp(cmd[0], "LOGIN") == 0){ 
+		// printf("Entered LOGIN loop");
+		// printf("%d\n",is_valid_IP(cmd[1]));
+		// printf("%d\n",is_valid_IP(cmd[1]));
+		// printf("%d\n",loggedin);
+		// printf("%d\n",isClient);
+		// printf("%d\n",count);
+		if(isServer || count != 3 || !is_valid_IP(cmd[1]) || !is_valid_port(cmd[2]) || logedin){
 			// only when fails to meet the required conditions
 			printf("Error in exception catch");	
 			cse4589_print_and_log("[%s:ERROR]\n", cmd[0]);			
 			cse4589_print_and_log("[%s:END]\n", cmd[0]);					
 			return;
 		}
-
-		// // clientsockfd = connect_host(cmd[1], cmd[2]);  //creates and connect socket to the server
-		// struct addrinfo hints, *servinfo, *p;
-		// memset(&hints, 0, sizeof hints);
-		// hints.ai_family = AF_INET;
-		// hints.ai_socktype = SOCK_STREAM;
-
-		// if(getaddrinfo(cmd[0], cmd[1], &hints, &servinfo) != 0){
-		// 	//fails to get the addr info
-		// 	printf("Error getaddrinfo");
-		// 	cse4589_print_and_log("[%s:ERROR]\n", cmd[0]);			
-		// 	cse4589_print_and_log("[%s:END]\n", cmd[0]);					
-		// 	return;
-		// }
-		// for(p=servinfo; p!= NULL; p=p->ai_next){
-		// 	if((clientsockfd = socket(p->ai_family, p->ai_socktype, p->ai_protocol)) == -1){
-		// 		continue;
-		// 	}
-		// 	if(connect(clientsockfd, p->ai_addr, p->ai_addrlen) == -1){
-		// 		close(clientsockfd);
-		// 		continue;
-		// 	}
-		// 	break;
-		// }
-		// if(p == NULL){
-		// 	//fail
-		// 	printf("Error");
-		// 	cse4589_print_and_log("[%s:ERROR]\n", cmd[0]);			
-		// 	cse4589_print_and_log("[%s:END]\n", cmd[0]);
-		// 	printf("Error");			
-		// 	return;
-		// }
-		// freeaddrinfo(servinfo);
 
 		int server_port = atoi(cmd[2]); 
 		//int socketfd; 
@@ -567,13 +432,13 @@ void shellCmd(char **cmd, int count){
 		if (clientsockfd < 0) { 
 			perror("socket() failed\n"); 
 		}
-		bzero(&client_addr, sizeof(client_addr)); 
-		client_addr.sin_family = AF_INET;
-		client_addr.sin_addr.s_addr = htonl(INADDR_ANY); 
-		client_addr.sin_port = htons(strToNum(listenerPort)); 
-		if (bind(clientsockfd, (struct sockaddr *) &client_addr, sizeof(struct sockaddr_in)) != 0) { 
-			perror("failed to bind port to client"); 
-		}
+		// bzero(&client_addr, sizeof(client_addr)); 
+		// client_addr.sin_family = AF_INET;
+		// client_addr.sin_addr.s_addr = htonl(INADDR_ANY); 
+		// client_addr.sin_port = htons(strToNum(listenerPort)); 
+		// if (bind(clientsockfd, (struct sockaddr *) &client_addr, sizeof(struct sockaddr_in)) != 0) { 
+		// 	perror("failed to bind port to client"); 
+		// }
 		
 		bzero(&server_addr, sizeof(server_addr));
 		server_addr.sin_family = AF_INET;
@@ -581,27 +446,27 @@ void shellCmd(char **cmd, int count){
 		server_addr.sin_port = htons(server_port);
 
 		if(connect(clientsockfd, (struct sockaddr*)&server_addr, sizeof(server_addr)) < 0) {
-			cse4589_print_and_log("[%s:ERROR]\n", "LOGIN");
-			cse4589_print_and_log("[%s:END]\n", "LOGIN");
+			cse4589_print_and_log("[%s:ERROR]\n", cmd[0]);
+			cse4589_print_and_log("[%s:END]\n", cmd[0]);
 			return; 
 		}
 				
 		printf("Socket conencted");
-		send(clientsockfd, listenerPort, sizeof listenerPort, 0); //sends port number to the server to fetch its buffered messages and list of logged-in clients 
+		send(clientsockfd, lis_port, sizeof lis_port, 0); //sends port number to the server to fetch its buffered messages and list of logged-in clients 
 
 		printf("Send to Server");
 
 		// Stores the data provided by server on successful registration
-		char buf[BUFLEN];
-		recv(clientsockfd, buf, BUFLEN, 0);  //receives the list of logged-in clients from the server
+		char clientList[BUFLEN];
+		recv(clientsockfd, clientList, BUFLEN, 0);  //receives the list of logged-in clients from the server
 		printf("Received from Server");
-		unpack_store(buf);                 
+		unpack_store(clientList);                 
 
-		char unread[BUFLEN];
-		recv(clientsockfd, unread, BUFLEN, 0);  //receives the list of buffered msgs from the server
+		char bufmsgList[BUFLEN];
+		recv(clientsockfd, bufmsgList, BUFLEN, 0);  //receives the list of buffered msgs from the server
 		char *msgbuf[BUFLEN];
 		int count = 0;
-		char *q = strtok(unread, "---");
+		char *q = strtok(bufmsgList, "---");
 		while (q!=NULL) {
 			msgbuf[count++] = q;
 			q = strtok(NULL, "---");
@@ -615,467 +480,464 @@ void shellCmd(char **cmd, int count){
 			i+=2;
 		}
 
-		loggedin = 1;
-		FD_SET(clientsockfd, &master);
+		logedin = 1;
+		FD_SET(clientsockfd, &master_list);
 		maxfd = clientsockfd>maxfd? clientsockfd:maxfd;   //set maxfd to max of the two
 
 		cse4589_print_and_log("[%s:SUCCESS]\n", cmd[0]);		
 		cse4589_print_and_log("[%s:END]\n", cmd[0]);
 		
-	}else if(strcmp(cmd[0], "REFRESH") == 0){ //CHECKED - Has some part to be handled on the server side
-		if(isClient != 1 || !loggedin){
-			// on failure
-			printf("entered expection \n");
+	}
+	else if(strcmp(cmd[0], "REFRESH") == 0){
+		if(isServer != 0 || !logedin){
+			//fail
 			cse4589_print_and_log("[%s:ERROR]\n", cmd[0]);			
 			cse4589_print_and_log("[%s:END]\n", cmd[0]);			
 			return;
 		}
-		printf("sending refresh to server");
-		send(clientsockfd, "REFRESH", 7, 0);  //send msg to the server for refresh list of currenlty logged-in clients
-		printf("sending  completed");
 
+		send(clientsockfd, "REFRESH", 7, 0);  //send msg to the server for refresh list of currenlty logged-in clients
 		char update[BUFLEN];
 		recv(clientsockfd, update, BUFLEN, 0);  //server sends list of currently logged in clients
-		printf("received from server \n");
-
-		unpack_store(update);   //unpack and store the details from the list in the data structure 
-		printf("list updated after refresh \n");
+		unpack_store(update);                   //unpack and store the details from the list in the data structure 
 		cse4589_print_and_log("[%s:SUCCESS]\n", cmd[0]);		
 		cse4589_print_and_log("[%s:END]\n", cmd[0]);
 		
-		//process msg to update list
-	}else if(strcmp(cmd[0], "SEND") == 0){ //CHECKED - Has some part to be handled on the server side
-		if(isClient != 1 || !loggedin || !is_valid_IP(cmd[1]) || !in_Cur_LogClients(cmd[1])){
-			//on failure
+	}
+	//pending to correct
+	else if(strcmp(cmd[0], "SEND") == 0){
+		if(isServer != 0 || !logedin || !isValidAddr(cmd[1], "8888")){
+			//fail
 			cse4589_print_and_log("[%s:ERROR]\n", cmd[0]);			
 			cse4589_print_and_log("[%s:END]\n", cmd[0]);			
 			return;
 		}
 
-		char msg[MSGLEN] = "";    //initialize a string of length 256
-		// loop concatenates each chunk of sent msg to the string msg
-		for (int i=2;i<count;i++){  
+		// check if recvier is in local list
+		int flag = 0;
+		for (int i=0; i<hostIndex; i++) {
+			if (strcmp(cmd[1], hosts[i].ip_addr) == 0) {
+				flag = 1;
+				break;
+			}
+		}
+		if(flag == 0) {
+			//fail
+			cse4589_print_and_log("[%s:ERROR]\n", cmd[0]);			
+			cse4589_print_and_log("[%s:END]\n", cmd[0]);
+			
+			return;
+		}
+
+		char msg[MSGLEN] = "";
+		for (int i=2;i<count;i++){
 			strcat(msg, cmd[i]);
 			if(i != count-1) strcat(msg, " ");
 		}
 
-		//Generating the command to be sent to the server for being to desired client
 		char buf[BUFLEN] = "";
 		strcat(buf, cmd[0]);
 		strcat(buf, " ");
 		strcat(buf, cmd[1]);
 		strcat(buf, " ");
 		strcat(buf, msg);
-		send(clientsockfd, buf, sizeof(buf), 0);  //send msg to the server
+		send(clientsockfd, buf, sizeof(buf), 0);// sizeof buf  also works?
 
 		char res[10];
-		recv(clientsockfd, res, 10, 0);  //response from the server
+		recv(clientsockfd, res, 10, 0);
 		//debug
-		//printf("--%s--\n", res);
+	//  printf("--%s--\n", res);
 		if (strcmp(res, "FAIL") == 0) {
-			//on failure
-			cse4589_print_and_log("[%s:ERROR]\n", cmd[0]);			
-			cse4589_print_and_log("[%s:END]\n", cmd[0]);			
-		}else{
-			//on success
-			cse4589_print_and_log("[%s:SUCCESS]\n", cmd[0]);			
-			cse4589_print_and_log("[%s:END]\n", cmd[0]);			
-		}
-
-	}else if (strcmp(cmd[0], "BROADCAST") == 0){ //CHECKED - Has some exceptions to be handled on the server side
-		if (isClient != 1 || !loggedin) {
-			//on failure
-			cse4589_print_and_log("[%s:ERROR]\n", cmd[0]);			
-			cse4589_print_and_log("[%s:END]\n", cmd[0]);			
-			return;
-		}
-//        if (count != 2) {   
-			//CHECK we can also check the count of chunks in the command (will not work as the msg can be divided in n chunks)
-//            //fail
-//            return;
-//        }
-
-		//Generating the msg entered on the terminal
-		char msg[MSGLEN] = "";
-		for (int i=1;i<count;i++){
-			strcat(msg, cmd[i]);
-			if(i != count-1) strcat(msg, " ");
-		}
-
-		//Generating the command entered on the terminal
-		char buf[BUFLEN];
-		strcpy(buf, cmd[0]);
-		strcat(buf, " ");
-		strcat(buf, msg);
-		send(clientsockfd, buf, BUFLEN, 0);   //send the command to the server
-		// rcv not written, also if rcv returns fail not handled  //CHECK
-		cse4589_print_and_log("[%s:SUCCESS]\n", cmd[0]);		
-		cse4589_print_and_log("[%s:END]\n", cmd[0]);
-		
-	}else if(strcmp(cmd[0], "BLOCK") == 0){ //CHECKED - Has some part to be handled on the server side
-
-		if (isClient != 1 || !loggedin || !is_valid_IP(cmd[1]) || count != 2) { 
-			// || !in_Cur_LogClients(cmd[1]) || alreadyBlocked(cmd[1], clientsockfd)) 
-			//on failure
-			printf("Entered exceptions \n");
-			printf("%d\n",isClient);
-			printf("%d\n",!loggedin);
-			printf("%d\n",!is_valid_IP(cmd[1]));
-			printf("%d\n",count);
-			printf("%d\n",!in_Cur_LogClients(cmd[1]));
-			printf("%d\n",alreadyBlocked(cmd[1], clientsockfd));			
-			cse4589_print_and_log("[%s:ERROR]\n", cmd[0]);			
-			cse4589_print_and_log("[%s:END]\n", cmd[0]);			
-			return;
-		}
-		printf("Cleared exceptions \n");
-		//Generating the command entered on the terminal
-		char buf[BUFLEN];
-		strcpy(buf, cmd[0]);
-		strcat(buf, " ");
-		strcat(buf, cmd[1]);
-
-		printf("msg gen \n");
-		send(clientsockfd, buf, BUFLEN, 0);  //send the command to the server
-		printf("msg sent to server \n");
-
-		char res[10];
-		recv(clientsockfd, res, 10, 0);  //server response
-		printf("msg received \n");
-
-		if(strcmp(res, "FAIL") == 0){
-			//on failure
-			cse4589_print_and_log("[%s:ERROR]\n", cmd[0]);			
-			cse4589_print_and_log("[%s:END]\n", cmd[0]);			
-		}else{
-			//on success
-			cse4589_print_and_log("[%s:SUCCESS]\n", cmd[0]);			
-			cse4589_print_and_log("[%s:END]\n", cmd[0]);			
-		}
-
-	}else if(strcmp(cmd[0], "UNBLOCK") == 0){ //CHECKED - Has some part to be handled on the server side
-		if(isClient != 1 || !loggedin || !is_valid_IP(cmd[1]) || count != 2 || !in_Cur_LogClients(cmd[1]) || !alreadyBlocked(cmd[1], clientsockfd)){ 
-			//on failure
-			cse4589_print_and_log("[%s:ERROR]\n", cmd[0]);			
-			cse4589_print_and_log("[%s:END]\n", cmd[0]);			
-			return;
-		}
-
-		//Generating the command entered on the terminal
-		char buf[BUFLEN];
-		strcpy(buf, cmd[0]);
-		strcat(buf, " ");
-		strcat(buf, cmd[1]);
-
-		send(clientsockfd, buf, BUFLEN, 0); //send the command to the server
-
-		char res[10];
-		recv(clientsockfd, res, 10, 0); //server response
-		if(strcmp(res, "FAIL") == 0){  //CHECK can remove fail
-			//on failure
-			cse4589_print_and_log("[%s:ERROR]\n", cmd[0]);			
-			cse4589_print_and_log("[%s:END]\n", cmd[0]);			
-		}else{
-			//on success
-			cse4589_print_and_log("[%s:SUCCESS]\n", cmd[0]);			
-			cse4589_print_and_log("[%s:END]\n", cmd[0]);			
-		}
-
-	}else if(strcmp(cmd[0], "LOGOUT") == 0){//CHECKED - Has some part to be handled on the server side
-		if(isClient && !loggedin){
-			//on failure
-			cse4589_print_and_log("[%s:ERROR]\n", cmd[0]);		
-			cse4589_print_and_log("[%s:END]\n", cmd[0]);		
-			return;
-		}
-		char buf[BUFLEN] = "LOGOUT";
-		send(clientsockfd, buf, BUFLEN, 0); //send the command to the server
-		loggedin = 0;         //logged-out
-		close(clientsockfd);  //close the socket
-		FD_CLR(clientsockfd, &master);  //clear closed socket from master list
-		cse4589_print_and_log("[%s:SUCCESS]\n", cmd[0]);		
-		cse4589_print_and_log("[%s:END]\n", cmd[0]);
-		// server response not present, also error msg not handled 
-	// git push exit event
-
-	}else if(strcmp(cmd[0], "EXIT") == 0){
-         char buf[BUFLEN] = "EXIT";
-         send(clientsockfd, buf, BUFLEN, 0);
-         loggedin = 0;
-         close(clientsockfd);
-         FD_CLR(clientsockfd, &master);
-		 cse4589_print_and_log("[%s:SUCCESS]\n", cmd[0]);
-		 fflush(stdout);
-		 cse4589_print_and_log("[%s:END]\n", cmd[0]);
-		 fflush(stdout);
-         exit(0);
-		 /*else if(strcmp(cmd[0], "STATISTICS") == 0){
-		if(role != 1){
 			//fail
-		cse4589_print_and_log("[%s:ERROR]\n", cmd[0]);
-		
+			cse4589_print_and_log("[%s:ERROR]\n", cmd[0]);
+			
+			cse4589_print_and_log("[%s:END]\n", cmd[0]);
+			
+		}else{
+			//success
+			cse4589_print_and_log("[%s:SUCCESS]\n", cmd[0]);
+			
+			cse4589_print_and_log("[%s:END]\n", cmd[0]);
+			
+		}
+
+	}
+	else if (strcmp(cmd[0], "BROADCAST") == 0){
+		if (isServer != 0 || !logedin) {
+			//fail
+			cse4589_print_and_log("[%s:ERROR]\n", cmd[0]);			
+			cse4589_print_and_log("[%s:END]\n", cmd[0]);			
+			return;
+		}
+
+		char msgbody[MSGLEN] = "";
+		for (int i=1;i<count;i++){
+			strcat(msgbody, cmd[i]);
+			if(i != count-1) strcat(msgbody, " ");
+		}
+
+		char tercmd[BUFLEN];
+		strcpy(tercmd, cmd[0]);
+		strcat(tercmd, " ");
+		strcat(tercmd, msgbody);
+		send(clientsockfd, tercmd, BUFLEN, 0);
+		cse4589_print_and_log("[%s:SUCCESS]\n", cmd[0]);		
 		cse4589_print_and_log("[%s:END]\n", cmd[0]);
 		
+	}
+	else if(strcmp(cmd[0], "BLOCK") == 0){
+		if (isServer != 0 || !logedin || !is_valid_IP(cmd[1]) || count != 2) {
+			//fail
+			cse4589_print_and_log("[%s:ERROR]\n", cmd[0]);			
+			cse4589_print_and_log("[%s:END]\n", cmd[0]);			
+			return;
+		}
+
+		// Checking for IP address match in local list
+		int flag = 0;
+		for(int i=0;i<hostIndex;i++){
+			if(strcmp(hosts[i].ip_addr, cmd[1]) == 0){
+				flag = 1;  //present in local list
+				break;
+			}
+		}
+
+		if(flag == 0){
+			//fail
+			cse4589_print_and_log("[%s:ERROR]\n", cmd[0]);			
+			cse4589_print_and_log("[%s:END]\n", cmd[0]);			
+			return;
+		}
+
+		//Generating the command entered on the terminal
+		char tercmd[BUFLEN];
+		strcpy(tercmd, cmd[0]);
+		strcat(tercmd, " ");
+		strcat(tercmd, cmd[1]);
+		send(clientsockfd, tercmd, BUFLEN, 0);
+
+		char res[10];  //result received from server
+		recv(clientsockfd, res, 10, 0);
+		if(strcmp(res, "FAIL") == 0){
+			//fail
+			cse4589_print_and_log("[%s:ERROR]\n", cmd[0]);			
+			cse4589_print_and_log("[%s:END]\n", cmd[0]);
+			
+		}else{
+			//success
+			cse4589_print_and_log("[%s:SUCCESS]\n", cmd[0]);			
+			cse4589_print_and_log("[%s:END]\n", cmd[0]);
+			
+		}
+
+	}else if(strcmp(cmd[0], "UNBLOCK") == 0){
+		if(isServer != 0 || !logedin || !is_valid_IP(cmd[1]) || count != 2){
+			//fail
+			cse4589_print_and_log("[%s:ERROR]\n", cmd[0]);			
+			cse4589_print_and_log("[%s:END]\n", cmd[0]);			
+			return;
+		}
+
+		// Checking for IP address match in local list
+		int flag = 0;
+		for(int i=0;i<hostIndex;i++){
+			if(strcmp(hosts[i].ip_addr, cmd[1]) == 0){
+				flag = 1;
+				break;
+			}
+		}
+		if(flag == 0){
+			//fail
+			cse4589_print_and_log("[%s:ERROR]\n", cmd[0]);
+			
+			cse4589_print_and_log("[%s:END]\n", cmd[0]);
+			
+			return;
+		}
+
+		//Generating the command entered on the terminal
+		char tercmd[BUFLEN];
+		strcpy(tercmd, cmd[0]);
+		strcat(tercmd, " ");
+		strcat(tercmd, cmd[1]);
+		send(clientsockfd, tercmd, BUFLEN, 0);
+
+		char res[10];  //result from the server
+		recv(clientsockfd, res, 10, 0);
+		if(strcmp(res, "FAIL") == 0){
+			//fail
+			cse4589_print_and_log("[%s:ERROR]\n", cmd[0]);			
+			cse4589_print_and_log("[%s:END]\n", cmd[0]);
+			
+		}else{
+			//success
+			cse4589_print_and_log("[%s:SUCCESS]\n", cmd[0]);			
+			cse4589_print_and_log("[%s:END]\n", cmd[0]);			
+		}
+
+	}
+	else if(strcmp(cmd[0], "EXIT") == 0){
+		char buf[BUFLEN] = "EXIT";
+		send(clientsockfd, buf, BUFLEN, 0);
+		logedin = 0;
+		close(clientsockfd);
+		FD_CLR(clientsockfd, &master_list);
+		cse4589_print_and_log("[%s:SUCCESS]\n", cmd[0]);		
+		cse4589_print_and_log("[%s:END]\n", cmd[0]);		
+		exit(0);
+	}
+	else if(strcmp(cmd[0], "LOGOUT") == 0){
+		if(!logedin){
+			//fail
+		cse4589_print_and_log("[%s:ERROR]\n", cmd[0]);		
+		cse4589_print_and_log("[%s:END]\n", cmd[0]);		
 		return;
 		}
-		cse4589_print_and_log("[%s:SUCCESS]\n", cmd[0]);
-		
-		for(int i=0;i<connIndex;i++){
+
+		char buf[BUFLEN] = "LOGOUT";
+		send(clientsockfd, buf, BUFLEN, 0); 
+		logedin = 0;
+		close(clientsockfd);
+		FD_CLR(clientsockfd, &master_list);
+		cse4589_print_and_log("[%s:SUCCESS]\n", cmd[0]);		
+		cse4589_print_and_log("[%s:END]\n", cmd[0]);		
+
+	}
+	else if(strcmp(cmd[0], "STATISTICS") == 0){
+		if(isServer != 1){
+		//fail
+		cse4589_print_and_log("[%s:ERROR]\n", cmd[0]);		
+		cse4589_print_and_log("[%s:END]\n", cmd[0]);		
+		return;
+		}
+				
+		for(int i=0;i<hostIndex;i++){
 			char tmp[20];
-			if(connections[i].status == logged_in){
+			if(hosts[i].status == login){
 				strcpy(tmp, "logged-in");
 			}else{
 				strcpy(tmp, "logged-out");
 			}
 
-			cse4589_print_and_log("%-5d%-35s%-8d%-8d%-8s\n", i+1, connections[i].hostname, connections[i].msg_sent, connections[i].msg_received, tmp);
+			cse4589_print_and_log("%-5d%-35s%-8d%-8d%-8s\n", i+1, hosts[i].hostname, hosts[i].msg_sent, hosts[i].msg_received, tmp);
 			
-			//cse4589
 		}
+		cse4589_print_and_log("[%s:SUCCESS]\n", cmd[0]);
 		cse4589_print_and_log("[%s:END]\n", cmd[0]);
 		
 
-	}*/
-	}
-	/*CHECKED STATISTICS COMMAND BY ALOK TRIPATHY*/
-	else if (strcmp(cmd[0],"STATISTICS") == 0)
-	{
-		if (isClient == 0)
-		{
-			int temp[100];
-			cse4589_print_and_log("[%s:SUCCESS]\n", cmd[0]);
-			int i = 0;
-			while(i < connIndex)
-			{
-				char tmp[20];
+	}else if(strcmp(cmd[0], "BLOCKED") == 0){
+		if(isServer != 1 || count != 2 || !is_valid_IP(cmd[1])){
+			//fail
+		cse4589_print_and_log("[%s:ERROR]\n", cmd[0]);		
+		cse4589_print_and_log("[%s:END]\n", cmd[0]);		
+		return;
+		}
 
-				if(connections[i].status == logged_in)
-					strcpy(tmp, "logged-in");
-				else
-					strcpy(tmp, "logged-out");
-
-				cse4589_print_and_log("%-5d%-35s%-8d%-8d%-8s\n", i+1, connections[i].hostname, connections[i].msg_sent, connections[i].msg_received, tmp);
+		int flag = 0, i= 0;
+		while(i<hostIndex){
+			if(strcmp(hosts[i].ip_addr, cmd[1]) == 0){ // fetching the clients struct host
+				flag = 1;
+				cse4589_print_and_log("[%s:SUCCESS]\n", cmd[0]);
 				
-				i++;
+				for (int j=0; j<hosts[i].blockindex; j++) { //looping through the block clients struct in the host struct
+					//cse4589
+					cse4589_print_and_log("%-5d%-35s%-20s%-8d\n", j+1, hosts[i].blockedIPs[j]->hostname, hosts[i].blockedIPs[j]->ip_addr, hosts[i].blockedIPs[j]->portNum);					
+				}
+				break;
 			}
-			cse4589_print_and_log("[%s:END]\n", cmd[0]);
-
+			i++;
 		}
 
-		else
-		{
-			cse4589_print_and_log("[%s:ERROR]\n", cmd[0]);
-			cse4589_print_and_log("[%s:END]\n", cmd[0]);
+		if(flag == 0){
+			//fail
+			cse4589_print_and_log("[%s:ERROR]\n", cmd[0]);		
+			cse4589_print_and_log("[%s:END]\n", cmd[0]);		
 			return;
+		}else{
+			cse4589_print_and_log("[%s:END]\n", cmd[0]);
+		
 		}
 	}
 
-	/*CHECKED BLOCKED COMMAND BY ALOK TRIPATHY*/
-	else if(strcmp(cmd[0], "BLOCKED") == 0)
-	{
-         if(isClient != 1 || count != 2 || !is_valid_IP(cmd[1]))
-		 {
-             //fail
-			cse4589_print_and_log("[%s:ERROR]\n", cmd[0]);
-		
-		  	cse4589_print_and_log("[%s:END]\n", cmd[0]);
-			
-            return;
-         }
-         int flag = 0;
-         for(int i=0;i<connIndex;i++)
-		 {
-             if(strcmp(connections[i].remote_addr, cmd[1]) == 0)
-			 {
-                 flag = 1;
-				 cse4589_print_and_log("[%s:SUCCESS]\n", cmd[0]);
-				
-                 for (int j=0; j<connections[i].blockindex; j++) 
-				 {
-                     //cse4589
-                     cse4589_print_and_log("%-5d%-35s%-20s%-8d\n", j+1, connections[i].blockedIPs[j]->hostname, connections[i].blockedIPs[j]->remote_addr, connections[i].blockedIPs[j]->portNum);
-					 
-                 }
-                 break;
-             }
-         }
-
-         if(flag == 0){
-             //fail
-			cse4589_print_and_log("[%s:ERROR]\n", cmd[0]);
-			
-		  	cse4589_print_and_log("[%s:END]\n", cmd[0]);
-			
-            return;
-         }else{
-		  	cse4589_print_and_log("[%s:END]\n", cmd[0]);
-			
-		 }
-     }
-
- }
-
-
-
+}
 
 /*
 * Response to client incoming msges
 */
-void response(char **arguments, int caller){  //CHECK caller - sockfd of the current client
+void response(char **arguments, int count, int caller){
 	if(strcmp(arguments[0], "SEND") == 0){
 
 		char msg[BUFLEN] = "";
 		char senderaddr[INET_ADDRSTRLEN];
 		int sender;
-		for(sender=0;sender<connIndex;sender++){
-			if(connections[sender].connsockfd == caller){  //identifying sender
-				strcat(msg, connections[sender].remote_addr);
+		for(sender=0;sender<hostIndex;sender++){
+			if(hosts[sender].hostsockfd == caller){
+				strcat(msg, hosts[sender].ip_addr);
 				strcat(msg, " ");
-				strcat(msg, arguments[2]); //count-1
+				strcat(msg, arguments[2]);
 				strcat(msg, " ");
 
-				strcpy(senderaddr, connections[sender].remote_addr); //fetch sender ipaddr
+				strcpy(senderaddr, hosts[sender].ip_addr);
 				break;
 			}
 		}
 
-		int flag = 0;// check if the target already exited   //CHECK can be named "present"
-		for(int i=0;i<connIndex;i++){
-			if(strcmp(arguments[1], connections[i].remote_addr) == 0){
-				flag = 1;  //indicates target has not exited
-				if(isBlocked(caller, arguments[1])){   //checks if the target has blocked the sender or not
-					send(caller, "BLOCKED", 7, 0);     //msg not sent to the receiver, but the sender is unware of this
+		int flag = 0;// check if the target already exited
+		for(int i=0;i<hostIndex;i++){
+			if(strcmp(arguments[1], hosts[i].ip_addr) == 0){
+				flag = 1;
+				if(isBlocked(caller, arguments[1])){
+					send(caller, "BLOCKED", 7, 0);
 					return;
 				}
 
-				// target is logged-in the server
-				if(connections[i].status == logged_in){  
-					send(connections[i].connsockfd, msg, BUFLEN, 0);
-					connections[i].msg_received++;
-
-					//trigger RELAYED event at the server
-					cse4589_print_and_log("[%s:SUCCESS]\n" , "RELAYED");					
-					cse4589_print_and_log("msg from:%s, to:%s\n[msg]:%s\n", connections[sender].remote_addr, connections[i].remote_addr, arguments[2]);					
+				if(hosts[i].status == login){
+					send(hosts[i].hostsockfd, msg, BUFLEN, 0);
+					hosts[i].msg_received++;
+					//triger event
+					cse4589_print_and_log("[%s:SUCCESS]\n" , "RELAYED");
+					
+					cse4589_print_and_log("msg from:%s, to:%s\n[msg]:%s\n", hosts[sender].ip_addr, hosts[i].ip_addr, arguments[2]);
+					
 					cse4589_print_and_log("[%s:END]\n", "RELAYED");
 					
-				// target is logged-out, but not exited the server, buffer the message for the target
+
 				}else{
-					strcat(bufferedmsg, connections[i].remote_addr);
+					strcat(bufferedmsg, hosts[i].ip_addr);
 					strcat(bufferedmsg, "---");
 					strcat(bufferedmsg, senderaddr);
 					strcat(bufferedmsg, "---");
 					strcat(bufferedmsg, arguments[2]);
 					strcat(bufferedmsg, "---");
-					connections[i].msg_received++;
+					hosts[i].msg_received++;
 				}
+
 				break;
 			}
 		}
-
-		if(flag==0){ //if the target is exited
-			send(caller, "FAIL", 4, 0);  
-		}
-		else{ // if message is sent to the target
-			send(caller, "SUCCESS", 7, 0);  //notify the sender
-			connections[sender].msg_sent++;
+		if(flag==0){
+			send(caller, "FAIL", 4, 0);
+		}else{
+			send(caller, "SUCCESS", 7, 0);
+			hosts[sender].msg_sent++;
 		}
 
 	}else if(strcmp(arguments[0], "REFRESH") == 0){
 		char list[BUFLEN] = "";
-		packClientInfo(list);
+		packList(list);
 		send(caller, list, BUFLEN, 0);
-
 	}else if(strcmp(arguments[0], "BROADCAST") == 0){
-
 		char sender[INET_ADDRSTRLEN];
 		char msg[BUFLEN];
-		for(int i=0;i<connIndex;i++){
-			if(connections[i].connsockfd == caller){
-				connections[i].msg_sent++;
-				strcpy(sender, connections[i].remote_addr);  // get sender ipaddr
+		for(int i=0;i<hostIndex;i++){
+			if(hosts[i].hostsockfd == caller){
+				hosts[i].msg_sent++;
+				strcpy(sender, hosts[i].ip_addr);
 
-				strcpy(msg, connections[i].remote_addr); 
+				strcpy(msg, hosts[i].ip_addr);
 				strcat(msg, " ");
 				strcat(msg, arguments[1]);
 				strcat(msg, " ");
 			}
 		}
 
-		// server broadcast the msg to all linked clients. sends msg to logged-in clients and buffers for logged-out clients
-		for (int i=0; i<connIndex; i++) {
-			// handling self broadcast and clients that have blocked sender
-			if(!isBlocked(caller, connections[i].remote_addr) && connections[i].connsockfd != caller){ 
-				if(connections[i].status == logged_in){
-					send(connections[i].connsockfd, msg, BUFLEN, 0);  //sending to logged-in target
-					connections[i].msg_received++;
-					//trigger RELAYED event
-					cse4589_print_and_log("[%s:SUCCESS]\n" , "RELAYED");					
-					cse4589_print_and_log("msg from:%s, to:%s\n[msg]:%s\n", sender, "255.255.255.255", msg);					
+		for (int i=0; i<hostIndex; i++) {
+			if(!isBlocked(caller, hosts[i].ip_addr) && hosts[i].hostsockfd != caller){
+				if(hosts[i].status == login){
+					send(hosts[i].hostsockfd, msg, BUFLEN, 0);
+					hosts[i].msg_received++;
+					//triger event
+					cse4589_print_and_log("[%s:SUCCESS]\n" , "RELAYED");
+					
+					cse4589_print_and_log("msg from:%s, to:%s\n[msg]:%s\n", sender, "255.255.255.255", msg);
+					
 					cse4589_print_and_log("[%s:END]\n", "RELAYED");
 					
 				}else{
 //                    strcat(bufferedmsg, "255.255.255.255"); mark
-					strcat(bufferedmsg, connections[i].remote_addr); //target ipaddr
+					strcat(bufferedmsg, hosts[i].ip_addr);
 					strcat(bufferedmsg, "---");
-					strcat(bufferedmsg, sender);     //sender ipaddr
+					strcat(bufferedmsg, sender);
 					strcat(bufferedmsg, "---");
-					strcat(bufferedmsg, arguments[1]);  //msg body
+					strcat(bufferedmsg, arguments[1]);
 					strcat(bufferedmsg, "---");
-					connections[i].msg_received++;
+					hosts[i].msg_received++;
 				}
 			}
 		}
 	}else if(strcmp(arguments[0], "BLOCK") == 0){
-		int i = 0; int b = 0;
-		for(i =0; i<connIndex; i++){
-			if(connections[i].connsockfd == caller) break;  // connections[i]  -> client for which connections[b] is blocked
-		}
-		
-		for(b =0; b<connIndex; b++){
-			if(strcmp(connections[b].remote_addr, arguments[1]) == 0) break;      // connections[b]  -> client to be blocked
+
+		int target;
+		for(target=0;target<hostIndex;target++){
+			if(hosts[target].hostsockfd == caller) break;
 		}
 
-		connections[i].blockedIPs[connections[i].blockindex++] = &connections[b];  //adding blocked client info to curr clients blockedIP data structure
-		
-		//Sorting the block list as per increasing port number
-		if(connections[i].blockindex > 1){
-			for(int k=0;i<connections[i].blockindex-1;k++){
-				for (int j=k+1; j<connections[i].blockindex; j++) {
-					if(connections[i].blockedIPs[k]->portNum > connections[i].blockedIPs[j]->portNum){
-						struct connection *tmp = connections[i].blockedIPs[k];
-						connections[i].blockedIPs[k] = connections[i].blockedIPs[j];
-						connections[i].blockedIPs[j] = tmp;
+		int found = 0;
+		int blocking;
+		for (blocking = 0; blocking< hostIndex; blocking++) {
+			if(strcmp(hosts[blocking].ip_addr, arguments[1])== 0) {
+				found = 1;
+				break;
+			}
+		}
+
+		if(found == 0){
+			send(caller, "FAIL", 4, 0);
+			return;
+		}
+
+		if (hosts[target].blockindex == 0) {
+			//potential bug, if the blocking client already exited
+			hosts[target].blockedIPs[hosts[target].blockindex++] = &hosts[blocking];
+		}else{
+			for(int i=0;i<hosts[target].blockindex; i++){
+				if(strcmp(hosts[target].blockedIPs[i]->ip_addr, arguments[1]) == 0){
+					send(caller, "FAIL", 4, 0);
+					return;
+				}
+			}
+			hosts[target].blockedIPs[hosts[target].blockindex++] = &hosts[blocking];
+
+			//sort the block list
+			if(hosts[target].blockindex > 1){
+				for(int i=0;i<hosts[target].blockindex-1;i++){
+					for (int j=i; j<hosts[target].blockindex; j++) {
+						if(hosts[target].blockedIPs[i]->portNum > hosts[target].blockedIPs[j]->portNum){
+							struct host *tmp = hosts[target].blockedIPs[i];
+							hosts[target].blockedIPs[i] = hosts[target].blockedIPs[j];
+							hosts[target].blockedIPs[j] = tmp;
+						}
 					}
 				}
 			}
 		}
 		send(caller, "SUCCESS", 7, 0);
-		
+
 	}else if(strcmp(arguments[0], "UNBLOCK") == 0){
-		int i = 0;
-		for(i = 0; i<connIndex;i++){
-			if(connections[i].connsockfd == caller) break;
+		int target = 0;
+		for(target = 0; target<hostIndex;target++){
+			if(hosts[target].hostsockfd == caller) break;
 		}
 
-		if(connections[i].blockindex == 0){
+		if(hosts[target].blockindex == 0){
 			send(caller, "FAIL", 4, 0);
 			return;
 		}
 
 		int flag = 0;
-		for(int m=0;i<connections[i].blockindex;m++){
-			if(strcmp(connections[i].blockedIPs[i]->remote_addr, arguments[1]) == 0){
-				if(m == (connections[i].blockindex -1)){    //Check if the last blocked client is unblocked
-					connections[i].blockindex--;
+		for(int i=0;i<hosts[target].blockindex;i++){
+			if(strcmp(hosts[target].blockedIPs[i]->ip_addr, arguments[1]) == 0){
+				if(i == 2){
+					hosts[target].blockindex--;
 					flag = 1;
 					break;
 				}
-				// shift the blocked clients upwards if any of the middle clients is unblocked
-				for(int j=m+1;j<connections[i].blockindex;j++){ 
-					connections[i].blockedIPs[j-1] = connections[i].blockedIPs[j];
+				for(int j=i+1;j<hosts[target].blockindex;j++){
+					hosts[target].blockedIPs[j-1] = hosts[target].blockedIPs[j];
 				}
 				flag = 1;
-				connections[i].blockindex--;
+				hosts[target].blockindex--;
 				break;
 			}
 		}
@@ -1085,176 +947,139 @@ void response(char **arguments, int caller){  //CHECK caller - sockfd of the cur
 		}
 		send(caller, "SUCCESS", 7, 0);
 
-	}
-	
-	/*Checked by Alok Tripathy.*/
-	else if(strcmp("EXIT", arguments[0]) == 0)
-	{
-		int target = 0;
-		while(target<connIndex)
-		{
-			if(connections[target].connsockfd == caller)
-			{
-				close(connections[target].connsockfd);
-				FD_CLR(connections[target].connsockfd, &master);
-				if(target == 3){  //last of the all 4 logged-in clients
-					connIndex--;
+	}else if(strcmp(arguments[0], "EXIT") == 0){
+		int target;
+		for(target=0;target<hostIndex;target++){
+			if(hosts[target].hostsockfd == caller){
+				close(hosts[target].hostsockfd);
+				FD_CLR(hosts[target].hostsockfd, &master_list);
+				if(target == 3){
+					hostIndex--;
 					break;
 				}
-				for(int j=target+1;j<connIndex;j++){  //removes the details of the exited client
-					connections[j-1] = connections[j];
-					j++;
+				for(int j=target+1;j<hostIndex;j++){
+					hosts[j-1] = hosts[j];
 				}
-				connIndex--;
+				hostIndex--;
+
 				break;
 			}
-			
-			target++;
+		}
+	}else if(strcmp(arguments[0], "LOGOUT") == 0){
+		for(int i=0;i<hostIndex;i++){
+			if(hosts[i].hostsockfd == caller){
+				close(hosts[i].hostsockfd);
+				FD_CLR(hosts[i].hostsockfd, &master_list);
+				hosts[i].status = logout;
+				break;
+			}
 		}
 	}
 
-	/* Checked by Alok Tripathy*/
-	else if(strcmp("LOGOUT",arguments[0]) == 0)
-	{
-		int i = 0;
-		while(i<connIndex)
-		{
-			if(connections[i].connsockfd == caller)
-			{
-				close(connections[i].connsockfd);
-				FD_CLR(connections[i].connsockfd, &master);
-				connections[i].status = logged_out;
-				break;
-			}
-			i++;
-		}
-	}
+
 }
 
 /*
-*  select for cmd and connecting.
+* Start select for cmd and connecting.
 */
-
-// Check the localsockfd and the clientsockfd conflict ##############################//
-
 void start(void){
-	char *argm[5];  //variable to store different parts of the stdin
+	char *argm[5];
 
-	// Initializes file descripter to have zero bits
-	FD_ZERO(&master);
-	FD_ZERO(&read_fds);
-
-	FD_SET(STD_IN, &master);  // Set STDIN to master_list
-	FD_SET(localsockfd, &master);  // Set localsockfd to master_list
-	maxfd = localsockfd;
+	FD_ZERO(&master_list);
+	FD_ZERO(&watch_list);
+	FD_SET(STD_IN, &master_list);
+	FD_SET(socketfd, &master_list);
+	maxfd = socketfd;
 
 	while (1) {
-
-		// //shell command prompt 
-		// printf("[PA1-Server@CSE489/589]$ ");
-
-		read_fds = master;
-		// select() ->  indicates which of the specified file descriptors is ready for reading, blocks if none is ready
-		if(select(maxfd+1, &read_fds, NULL, NULL, NULL) == -1){
-			perror("select() error"); 
-			exit(-1);
+		watch_list = master_list;
+		if(select(maxfd+1, &watch_list, NULL, NULL, NULL) == -1){
+			return;
 		}
-		int i = 0;
-		// fetching the available socket 
-		for(i=0 ;i < maxfd+1; i++){
-			if(FD_ISSET(i, &read_fds)){
-				// This section of code handles the terminal input and fetches the command and input arguments
+
+		for(int i=0 ;i < maxfd+1; i++){
+			if(FD_ISSET(i, &watch_list)){
+				// collect input
 				if(i == STD_IN){
-					// printf("i == STD_IN");
-					char *cmd = (char *)malloc(sizeof(char)*CMD_SIZE);
-					memset(cmd, '\0', CMD_SIZE);
-					fgets(cmd, CMD_SIZE-1, stdin);
-					for(int j =0; j<CMD_SIZE; j++){
+					char *cmd = (char *)malloc(sizeof(char)*CMD_LEN);
+					memset(cmd, '\0', CMD_LEN);
+					fgets(cmd, CMD_LEN-1, stdin);
+					for(int j =0; j<CMD_LEN; j++){
 						if(cmd[j] == '\n'){
 							cmd[j] = '\0';
 							break;
 						}
 					}
 
-					int args_num = 0;
+					int count = 0;
 					char *tmp = strtok(cmd, " ");
 					while(tmp != NULL){
-						argm[args_num++] = tmp;   //argm stores all the parts of input provided through terminal
+						argm[count++] = tmp;
 						tmp = strtok(NULL, " ");
 					}
 
-					shellCmd(argm, args_num);   //user defined function that implements set of events
-
-				}else if(i == localsockfd && isClient == 0){ //In server mode
-					// process new connections, use a data structure to store info
-
-					printf("i == localsockfd && isClient == 0");
+					shellCmds(argm, count);
+				}else if(i == socketfd && isServer == 1){
+					// process new hosts, use a data structure to store info
 					struct sockaddr_storage remoteaddr;
 					socklen_t len = sizeof(remoteaddr);
-					int newfd = accept(localsockfd, (struct sockaddr *)&remoteaddr, &len);
-					if(newfd == -1){ 
-						//flag = -1; //check
-						continue;  //check for another available socket
+					int newfd = accept(socketfd, (struct sockaddr *)&remoteaddr, &len);
+					if(newfd == -1){
+					//  flag = -1;
+						continue;
 					}
-					FD_SET(newfd, &master); // Set newfd to master_list
-					maxfd = maxfd > newfd? maxfd: newfd;   // sets new max value
+					FD_SET(newfd, &master_list);
+					maxfd = maxfd > newfd? maxfd: newfd;
 
-					/*##### CAN BE CLUBBED TO ONE FUNCTION - START #####*/
-
-					char clientPort[PORTSTRLEN];   
-					// bug: different length between client and server   //check 
+					char clientPort[PORTSTRLEN];
+					// bug: different length between client and server
 					recv(newfd, clientPort, PORTSTRLEN, 0);
-					char tmp[INET_ADDRSTRLEN];   //buffer with size INET_ADDRSTRLEN
+					char tmp[INET_ADDRSTRLEN];
 					inet_ntop(AF_INET, &(((struct sockaddr_in *)&remoteaddr)->sin_addr), tmp, INET_ADDRSTRLEN);
-
 					struct hostent *he;
-					struct in_addr ipv4addr; 
+					struct in_addr ipv4addr;
 					inet_pton(AF_INET, tmp, &ipv4addr);
-					he = gethostbyaddr(&ipv4addr, sizeof(struct in_addr), AF_INET);  //returns data in hostent structure
-
+					he = gethostbyaddr(&ipv4addr, sizeof(struct in_addr), AF_INET);
 					int exist = 0;
-					for(int i=0;i<connIndex;i++){
-						if(strcmp(connections[i].remote_addr, tmp) == 0){ //checks if any of the conections have same addr
+					for(int i=0;i<hostIndex;i++){
+						if(strcmp(hosts[i].ip_addr, tmp) == 0){
 							exist = 1;
-							connections[i].status = logged_in; //updates status for the host
+							hosts[i].status = login;
 							break;
 						}
 					}
-					//if not match found, maintain a new connection record
-					if(!exist){  
-						struct connection newConnection;
-						newConnection.connsockfd = newfd;
-						strcpy(newConnection.remote_addr, tmp);
-						//newConnection.portNum = ((struct sockaddr_in *)&remoteaddr)->sin_port;  //remove
-						newConnection.portNum = strToNum(clientPort);
+					if(!exist){
+						struct host newConnection;
+						newConnection.hostsockfd = newfd;
+						strcpy(newConnection.ip_addr, tmp);
+						//newConnection.portNum = ((struct sockaddr_in *)&remoteaddr)->sin_port;
+						newConnection.portNum = strToInt(clientPort);
 						strcpy(newConnection.hostname, he->h_name);
 						newConnection.msg_sent = 0;
 						newConnection.msg_received = 0;
-						newConnection.status = logged_in;
+						newConnection.status = login;
 						newConnection.blockindex = 0;
-						connections[connIndex++] = newConnection;  //append to our previous connection set
+						hosts[hostIndex++] = newConnection;
 					}
-					// Sorting the connection array in increasing order of the port number
-					if(connIndex > 1){
-						for(int m = 0; m< connIndex-1; m++){
-							for(int fast = m+1; fast<connIndex; fast++){
-								if(connections[m].portNum > connections[fast].portNum){
-									struct connection tmp = connections[m];
-									connections[m] = connections[fast];
-									connections[fast] = tmp;
+					// sort the array
+					if(hostIndex > 1){
+						for(int cur = 0; cur< hostIndex-1; cur++){
+							for(int fast = cur+1; fast<hostIndex; fast++){
+								if(hosts[cur].portNum > hosts[fast].portNum){
+									struct host tmp = hosts[cur];
+									hosts[cur] = hosts[fast];
+									hosts[fast] = tmp;
 								}
 							}
 						}
 					}
-					/*##### CAN BE CLUBBED TO ONE FUNCTION - END #####*/
-
-					//1. sents packed list of current logged-in clients to the newly connected client
+					// afterwards redirect the array to newly connected client
 					char list[BUFLEN] = "";
-					packClientInfo(list);
-					send(newfd, list, BUFLEN, 0);  
+					packList(list);
+					send(newfd, list, BUFLEN, 0);
 
 
-					//2. Prepare buffered msg for that client
+					//prepare buffered msg for that client
 					int count = 0;
 					char *bufmsg[BUFLEN];
 					char *p;
@@ -1267,46 +1092,50 @@ void start(void){
 					char newBufferedmsg[BUFLEN]="";
 					char sendingmsg[BUFLEN]="";
 
-					int flag = 0;   //Flag for Broadcast msg
+					int flag = 0;
 					for (int i=0; i<count; ) {
-						if (strcmp(tmp, bufmsg[i]) == 0) {  //matching the IP address in the msg with the cient
+						if (strcmp(tmp, bufmsg[i]) == 0) {
 							if(flag == 0){
 								strcat(sendingmsg, "BROADCAST,");
 								strcat(sendingmsg, "---");
 								flag = 1;
 							}
-							strcat(sendingmsg, bufmsg[i+1]);  //generating buffered msg for the client
+							strcat(sendingmsg, bufmsg[i+1]);
 							strcat(sendingmsg, "---");
 							strcat(sendingmsg, bufmsg[i+2]);
 							strcat(sendingmsg, "---");
-							cse4589_print_and_log("[%s:SUCCESS]\n", "RELAYED");							
+							cse4589_print_and_log("[%s:SUCCESS]\n", "RELAYED");
+							
 							cse4589_print_and_log("msg from:%s, to:%s\n[msg]:%s\n", bufmsg[i+1], bufmsg[i], bufmsg[i+2]);
+							
 							cse4589_print_and_log("[%s:END]\n", "RELAYED");
 							
-							i+=3; //three terms getting used in one message send
-						} else if(strcmp(bufmsg[i], "255.255.255.255") == 0){  //means its broadcasted mesage
+							i+=3;
+						} else if(strcmp(bufmsg[i], "255.255.255.255") == 0){
 							if(flag == 0){
 								strcat(sendingmsg, "BROADCAST,");
 								strcat(sendingmsg, "---");
 								flag = 1;
 							}
-							strcat(newBufferedmsg, "255.255.255.255"); //maintain copy for other clients in the broadcast network
+							strcat(newBufferedmsg, "255.255.255.255");
 							strcat(newBufferedmsg, "---");
 							strcat(newBufferedmsg, bufmsg[i+1]);
 							strcat(newBufferedmsg, "---");
 							strcat(newBufferedmsg, bufmsg[i+2]);
 							strcat(newBufferedmsg, "---");
 
-							strcat(sendingmsg, bufmsg[i+1]);  //generating buffered msg for the client
+							strcat(sendingmsg, bufmsg[i+1]);
 							strcat(sendingmsg, "---");
 							strcat(sendingmsg, bufmsg[i+2]);
 							strcat(sendingmsg, "---");
-							cse4589_print_and_log("[%s:SUCCESS]\n", "RELAYED");							
-							cse4589_print_and_log("msg from:%s, to:%s\n[msg]:%s\n", bufmsg[i+1], bufmsg[i], bufmsg[i+2]);		
+							cse4589_print_and_log("[%s:SUCCESS]\n", "RELAYED");
+							
+							cse4589_print_and_log("msg from:%s, to:%s\n[msg]:%s\n", bufmsg[i+1], bufmsg[i], bufmsg[i+2]);
+							
 							cse4589_print_and_log("[%s:END]\n", "RELAYED");
 							
 							i+=3;
-						} else{                                         // buffer holds msgs of other clients
+						} else{
 							strcat(newBufferedmsg, bufmsg[i++]);
 							strcat(newBufferedmsg, "---");
 							strcat(newBufferedmsg, bufmsg[i++]);
@@ -1315,20 +1144,18 @@ void start(void){
 							strcat(newBufferedmsg, "---");
 						}
 					}
-					strcpy(bufferedmsg, newBufferedmsg);  // copy back to original buffer
+					strcpy(bufferedmsg, newBufferedmsg);
 			
-					send(newfd, sendingmsg, BUFLEN, 0);  //send msg to client
+					send(newfd, sendingmsg, BUFLEN, 0);
 
-				}else if(i == clientsockfd && isClient == 1){ //In client mode
-
-					printf("i == clientsockfd && isClient == 1");
+				}else if(isServer == 0 && i == clientsockfd){
 					char buf[BUFLEN];
-					int nbytes = recv(i, buf, sizeof buf, 0);  					
+					int nbytes = recv(i, buf, sizeof buf, 0);
+					
 					char flag[10]="";
-
-					if(nbytes > 1){   //Some data is received
-						strncpy(flag, buf, 10);  // copies only upto 10 characters
-						}
+				if(nbytes > 1){
+					strncpy(flag, buf, 10);
+					}
 
 					if(strcmp(flag, "BROADCAST,") == 0){
 					char *tmp;
@@ -1340,36 +1167,41 @@ void start(void){
 						tmp = strtok(NULL, "---");
 					}
 				
-					//prints and logs the msgs on the client side
-					for(int i=1;i<count;){ // i=0, represents the command sent 
-						cse4589_print_and_log("[%s:SUCCESS]\n", "RECEIVED");						
-						cse4589_print_and_log("msg from:%s\n[msg]:%s\n", msgset[i], msgset[i+1]);						
-						cse4589_print_and_log("[%s:END]\n", "RECEIVED");												
+
+					for(int i=1;i<count;){
+						cse4589_print_and_log("[%s:SUCCESS]\n", "RECEIVED");
+						
+						cse4589_print_and_log("msg from:%s\n[msg]:%s\n", msgset[i], msgset[i+1]);
+						
+						cse4589_print_and_log("[%s:END]\n", "RECEIVED");
+						
 						i+=2;
 					}
 
 
-					}else{  
-							char *tmp;
-							int count = 0;
-							char *msgset[BUFLEN];
-							tmp = strtok(buf, " ");
-							while (tmp != NULL) {
-								msgset[count++] = tmp;
-								tmp = strtok(NULL, " ");
-							}
+				}else{
+						char *tmp;
+						int count = 0;
+						char *msgset[BUFLEN];
+						tmp = strtok(buf, " ");
+						while (tmp != NULL) {
+							msgset[count++] = tmp;
+							tmp = strtok(NULL, " ");
+						}
 
-							char recvmsg[MSGLEN] = "";
-							for(int n = 1; n< count; n++){
-							strcat(recvmsg, msgset[n]);
-							if(n<count-1) strcat(recvmsg, " ");
-							}
+						char recvmsg[MSGLEN] = "";
+						for(int n = 1; n< count; n++){
+						strcat(recvmsg, msgset[n]);
+						if(n<count-1) strcat(recvmsg, " ");
+						}
 
-							cse4589_print_and_log("[%s:SUCCESS]\n", "RECEIVED");							
-							cse4589_print_and_log("msg from:%s\n[msg]:%s\n", msgset[0], recvmsg);							
-							cse4589_print_and_log("[%s:END]\n", "RECEIVED");
-							
-							}
+						cse4589_print_and_log("[%s:SUCCESS]\n", "RECEIVED");
+						
+						cse4589_print_and_log("msg from:%s\n[msg]:%s\n", msgset[0], recvmsg);
+						
+						cse4589_print_and_log("[%s:END]\n", "RECEIVED");
+						
+						}
 					// triger event cse4589
 					// recv from server to receive msg from others
 				}else{
@@ -1387,7 +1219,6 @@ void start(void){
 					}
 
 					char msg[MSGLEN] = "";
-
 					if(strcmp(arguments[0], "SEND") == 0){
 						for(int i=2; i<count; i++){
 						strcat(msg, arguments[i]);
@@ -1406,23 +1237,6 @@ void start(void){
 						arguments[count-1] = msg;
 					}
 
-					if(strcmp(arguments[0], "BLOCK") == 0){
-					for(int i=1; i<count; i++){
-						strcat(msg, arguments[i]);
-						if(i < count-1) strcat(msg, " ");
-						}
-						count = 2;
-						arguments[count-1] = msg;
-					}
-
-					if(strcmp(arguments[0], "UNBLOCK") == 0){
-					for(int i=1; i<count; i++){
-						strcat(msg, arguments[i]);
-						if(i < count-1) strcat(msg, " ");
-						}
-						count = 2;
-						arguments[count-1] = msg;
-					}
 					//debug
 					//printf("%s\n%s\n", msg, arguments[count]);
 
@@ -1431,15 +1245,14 @@ void start(void){
 					//}
 					//printf("\n");
 
-				response(arguments, clientsockfd); //CHECK replaced i with clientsockfd
-					// recv from connected socket, also need to consider argument,send, refresh or block.  //CHECK
+				response(arguments, count, i);
+					// recv from connected socket, also need to consider argument,send, refresh or block.
 
 				}
 			}
 		}
 	}
 }
-
 /**
  * main function
  *
@@ -1449,90 +1262,25 @@ void start(void){
  */
 int main(int argc, char **argv)
 {
-	/*Init. Logger*/
-	cse4589_init_log(argv[2]);
+/*Init. Logger*/
+cse4589_init_log(argv[2]);
 
-	/*Clear LOGFILE*/
-	fclose(fopen(LOGFILE, "w"));
-	
-	/*Start Here*/
-	// This a variable is used as a flag to indicate client or server. 0 -> Server and 1 -> Client
-	//int isClient = 0;
+/*Clear LOGFILE*/
+fclose(fopen(LOGFILE, "w"));
 
-	// variable for socket file descriptor
-	int sock_fd = 0;
-
-	/*Start Here*/
-	//Initiaties the further steps only when the segment is passed
-	if (argc == 3)
-	{
-		// This segment creates socket for the server and binds it to a port and puts it in listen mode
-		if (strcmp(argv[1], "s") == 0)
-		{
-			// TODO - ALOK
-			isClient = 0;
-			strcpy(listenerPort, argv[2]);
-			// localsockfd = bind_socket(argv[2]);
-			// if(listen(localsockfd, BACKLOG) == -1)
-			// {
-			// 	perror("listen");
-			// 	exit(-1);
-			// }
-			prep(argv[2]);
-			start();
-		}
-
-
-		// This segment creates socket for the client and binds it to a port and puts it in connect mode
-		else if (strcmp(argv[1], "c") == 0)
-		{
-			isClient = 1;
-			strcpy(listenerPort, argv[2]);
-			// if((localsockfd=socket(AF_INET,SOCK_STREAM,0))==-1)
-			// {
-			// 	perror("socket");
-			// 	exit(-1);
-			// }
-			// printf("Client socket created %d", localsockfd);
-			prep(argv[2]);
-			start();
-		}
-		else 
-		{
-			printf("Please enter only two argument \'c\' or \'s\' and \'PORT NUMBER\'");
-			exit(-1); //returns exit code -1 to the parent
-		}
-	}
-	else 
-	{
-		printf("Please enter only two argument \'c\' or \'s\' and \'PORT NUMBER\'");
-		exit(-1); //returns exit code -1 to the parent
-	}
-		
-	// // Defining structures for hosts and messages
-	// struct host {
-	// 	char *hostname;
-	// 	char *ip_addr;
-	// 	int port_num;
-	// 	int num_msg_sent;
-	// 	int num_msg_rcv;
-	// 	char *status;
-	// 	int fd;
-	// 	struct host * blocked;
-	// 	struct host * next_host;
-	// 	bool is_logged_in;
-	// 	bool is_server;
-	// 	struct message * queued_messages;
-	// };
-
-	// struct message {
-	// 	char *text;
-	// 	struct host * from_client;
-	// 	struct message * next_message;
-	// 	bool is_broadcast;
-	// };
-	
-	return 0;
+/*Start Here*/
+if (argc != 3) {
+	printf("usage: ./chat_app s/c #port\n");
+	return 1;
 }
 
+if(strcmp(argv[1], "s")==0) isServer = 1;
+else if(strcmp(argv[1], "c")==0) isServer = 0;
+else return -1; //invalid argument
+strcpy(lis_port, argv[2]);
 
+prep(argv[2]);
+start();
+
+return 0;
+}
