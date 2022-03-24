@@ -531,7 +531,7 @@ void shellCmds(char **cmd, int count){
 	}
 	//pending to correct
 	else if(strcmp(cmd[0], "SEND") == 0){
-		if(isServer != 0 || !logedin || !isValidAddr(cmd[1], "8888")){
+		if(isServer != 0 || !logedin || !is_valid_IP(cmd[1])){
 			//fail
 			cse4589_print_and_log("[%s:ERROR]\n", cmd[0]);			
 			cse4589_print_and_log("[%s:END]\n", cmd[0]);			
@@ -574,14 +574,12 @@ void shellCmds(char **cmd, int count){
 	//  printf("--%s--\n", res);
 		if (strcmp(res, "FAIL") == 0) {
 			//fail
-			cse4589_print_and_log("[%s:ERROR]\n", cmd[0]);
-			
+			cse4589_print_and_log("[%s:ERROR]\n", cmd[0]);			
 			cse4589_print_and_log("[%s:END]\n", cmd[0]);
 			
 		}else{
 			//success
-			cse4589_print_and_log("[%s:SUCCESS]\n", cmd[0]);
-			
+			cse4589_print_and_log("[%s:SUCCESS]\n", cmd[0]);			
 			cse4589_print_and_log("[%s:END]\n", cmd[0]);
 			
 		}
@@ -1093,7 +1091,7 @@ void start(void){
 					}
 					// afterwards redirect the array to newly connected client
 					char list[BUFLEN] = "";
-					packList(list);
+					packClientInfo(list);
 					send(newfd, list, BUFLEN, 0);
 
 
@@ -1169,7 +1167,7 @@ void start(void){
 					char flag[10]="";
 
 					if(databytes > 1){
-						trncpy(flag, buf, 10);
+						strncpy(flag, buf, 10);
 					}
 
 					if(strcmp(flag, "BROADCAST,") == 0){
